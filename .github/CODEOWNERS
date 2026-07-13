@@ -1,0 +1,6 @@
+# Code owners for ResearchClaudeCodeSkills.
+# The owner listed here is auto-requested for review on PRs and, when branch
+# protection's "Require review from Code Owners" is enabled, must approve merges.
+# (Owner must have write access to the repo.)
+
+*   @ScottThurlow

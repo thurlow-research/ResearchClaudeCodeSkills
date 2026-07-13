@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+# OS
+.DS_Store
+# secrets / local env (never commit keys)
+.envrc
+.env
+*.local
+# caches created at runtime
+.cache/
+
+# build artifact — published via GitHub Releases, not committed
+releases/*.zip
