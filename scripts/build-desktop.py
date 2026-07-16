@@ -156,6 +156,51 @@ Environment caveats (claude.ai sandbox):
 }
 
 
+# claude.ai rejects skill uploads whose frontmatter description exceeds this
+DESCRIPTION_LIMIT = 1024
+
+# Desktop-only replacements for descriptions over the limit (keep the trigger
+# phrases — the description is what Claude matches against to pick the skill)
+SHORT_DESCRIPTIONS = {
+    "zotero-merge-prep": (
+        "Consolidate duplicate Zotero records BEFORE running Zotero's native \"Merge Items\", "
+        "so the merge is lossless. Zotero's merge keeps only the master record's field values "
+        "(silently dropping metadata the other copies had) and only groups items of the SAME "
+        "item type — so cross-type duplicates (preprint vs journalArticle vs conferencePaper) "
+        "are never detected. Given a title (or explicit item keys), this skill finds the "
+        "duplicates, confirms they're the same work, UNIONS their metadata (authors, abstract, "
+        "DOI, URL, venue, date — gap-filling from OpenAlex), and NORMALIZES their item types "
+        "(tagging orig-type:/orig-date: for lineage), so Zotero's Duplicate Items merge drops "
+        "nothing. Use when the user says \"prep duplicates before merging\", \"Zotero dedupe "
+        "isn't detecting these\", \"consolidate these duplicate records\", \"these two entries "
+        "are the same paper\", or \"fix the metadata before I dedupe\". Complements the "
+        "`zotero` and `openalex` skills."
+    ),
+}
+
+
+def shorten_description(name: str, text: str, errors: list) -> str:
+    import re
+
+    m = re.search(r"^description: (.+)$", text, flags=re.MULTILINE)
+    if not m:
+        errors.append(f"{name}: no description line found in frontmatter")
+        return text
+    if len(m.group(1)) <= DESCRIPTION_LIMIT:
+        return text
+    short = SHORT_DESCRIPTIONS.get(name)
+    if short is None:
+        errors.append(
+            f"{name}: description is {len(m.group(1))} chars (limit {DESCRIPTION_LIMIT}) "
+            "and no SHORT_DESCRIPTIONS entry exists"
+        )
+        return text
+    if len(short) > DESCRIPTION_LIMIT:
+        errors.append(f"{name}: SHORT_DESCRIPTIONS entry is itself {len(short)} chars")
+        return text
+    return text[: m.start(1)] + short + text[m.end(1):]
+
+
 def main() -> None:
     if SKILLS_OUT.exists():
         shutil.rmtree(SKILLS_OUT)
@@ -186,6 +231,7 @@ def main() -> None:
                 errors.append(f"{name}: anchor matches more than once:\n  {old.splitlines()[0]}...")
                 continue
             text = text.replace(old, new)
+        text = shorten_description(name, text, errors)
         skill_md.write_text(text, encoding="utf-8")
 
         zip_path = ZIPS_OUT / f"{name}.zip"
