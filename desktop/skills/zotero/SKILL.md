@@ -27,7 +27,8 @@ lines in the **project instructions** (or the user's global preferences), using 
 variable names the CLI already reads:
 
 ```
-ZOTERO_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
+ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # reads
+ZOTERO_API_KEY_RW=xxxxxxxxxxxxxxxxxxxxxxxx   # writes (e.g. tag-add --commit); omit if you only read
 ZOTERO_LIBRARY_ID=1234567
 ZOTERO_LIBRARY_TYPE=group
 ```
@@ -36,7 +37,7 @@ Read the values from the instructions and pass them **inline as environment vari
 every script invocation**:
 
 ```
-ZOTERO_API_KEY=... ZOTERO_LIBRARY_ID=... ZOTERO_LIBRARY_TYPE=group \
+ZOTERO_API_KEY_RO=... ZOTERO_LIBRARY_ID=... ZOTERO_LIBRARY_TYPE=group \
   python3 scripts/zotero.py collections
 ```
 

@@ -48,7 +48,8 @@ Rules:
   it there (or paste it in chat for this conversation only). Do not invent values."""
 
 
-ZOTERO_KEYS = """ZOTERO_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
+ZOTERO_KEYS = """ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # reads
+ZOTERO_API_KEY_RW=xxxxxxxxxxxxxxxxxxxxxxxx   # writes (e.g. tag-add --commit); omit if you only read
 ZOTERO_LIBRARY_ID=1234567
 ZOTERO_LIBRARY_TYPE=group"""
 
@@ -66,10 +67,12 @@ PATCHES = {
 
 The recommended setup is to keep a single `.env` at `~/.config/claude-zotero/.env`. That way the skill works from any directory and the file lives outside any git repo.
 
+**Read/write key split (least-privilege).** The script also accepts a split pair — `ZOTERO_API_KEY_RO` (reads) and `ZOTERO_API_KEY_RW` (writes, e.g. `tag-add --commit`): it prefers RO for reads and RW for writes, and falls back to a single `ZOTERO_API_KEY` if that's all that's set. Prefer the split so read-only work never carries a write-capable key.
+
 If any required variable is missing when the skill is first used, ask the user to supply it. Do not invent values.""",
             block(
                 ZOTERO_KEYS,
-                "ZOTERO_API_KEY=... ZOTERO_LIBRARY_ID=... ZOTERO_LIBRARY_TYPE=group \\\n  python3 scripts/zotero.py collections",
+                "ZOTERO_API_KEY_RO=... ZOTERO_LIBRARY_ID=... ZOTERO_LIBRARY_TYPE=group \\\n  python3 scripts/zotero.py collections",
             ),
         ),
         (

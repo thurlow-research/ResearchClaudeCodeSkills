@@ -26,7 +26,8 @@ lines in the **project instructions** (or the user's global preferences), using 
 variable names the CLI already reads:
 
 ```
-ZOTERO_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
+ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # reads
+ZOTERO_API_KEY_RW=xxxxxxxxxxxxxxxxxxxxxxxx   # writes (e.g. tag-add --commit); omit if you only read
 ZOTERO_LIBRARY_ID=1234567
 ZOTERO_LIBRARY_TYPE=group
 OPENALEX_MAILTO=you@example.edu
