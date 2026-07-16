@@ -9,19 +9,20 @@ TXT via Zotero's S3 form-POST flow (create attachment -> authorize -> multipart 
 to S3 -> register). Idempotent: items that already have a .txt attachment are skipped;
 a failed upload deletes its half-created attachment so retries stay clean.
 
-Env: ZOTERO_API_KEY (WRITE key), ZOTERO_LIBRARY_ID, ZOTERO_LIBRARY_TYPE (group|user).
+Env: ZOTERO_API_KEY_RW (writes; legacy ZOTERO_API_KEY still works), ZOTERO_LIBRARY_ID, ZOTERO_LIBRARY_TYPE (group|user). DRY-RUN by default; pass --commit to upload.
 Requires: pdftotext (poppler) on PATH.
 
 Usage:
   python3 pdf_to_text.py --collection KEY[,KEY...]      # all items in these collections
   python3 pdf_to_text.py --items KEY[,KEY...]           # explicit parent item keys
   python3 pdf_to_text.py --collection KEY --limit 1     # validation batch (test 1 first!)
-  python3 pdf_to_text.py --collection KEY --dry-run     # convert but don't upload
+  python3 pdf_to_text.py --collection KEY               # DRY-RUN (default): convert, do NOT upload
+  python3 pdf_to_text.py --collection KEY --commit      # actually upload the TXT attachments
 """
 import argparse, hashlib, json, os, subprocess, sys, tempfile, time, urllib.parse, urllib.request, urllib.error, socket
 from pathlib import Path
 socket.setdefaulttimeout(120)
-KEY=os.environ["ZOTERO_API_KEY"]; LIB=os.environ["ZOTERO_LIBRARY_ID"]
+KEY=(os.environ.get("ZOTERO_API_KEY_RW") or os.environ.get("ZOTERO_API_KEY") or os.environ.get("ZOTERO_API_KEY_RO","")); LIB=os.environ["ZOTERO_LIBRARY_ID"]
 TYPE=os.environ.get("ZOTERO_LIBRARY_TYPE","group")
 BASE=f"https://api.zotero.org/{'groups' if TYPE=='group' else 'users'}/{LIB}"
 H={"Zotero-API-Key":KEY,"Zotero-API-Version":"3"}
@@ -104,6 +105,7 @@ def main():
     ap.add_argument("--items",help="comma-list of explicit parent item keys")
     ap.add_argument("--limit",type=int,default=0)
     ap.add_argument("--dry-run",action="store_true")
+    ap.add_argument("--commit",action="store_true",help="actually upload TXTs (default: dry-run, no writes)")
     a=ap.parse_args()
     if not a.collection and not a.items: sys.exit("need --collection or --items")
 
@@ -139,7 +141,7 @@ def main():
             subprocess.run(["pdftotext","-enc","UTF-8",pp,tp],check=True,timeout=120)
             txt=Path(tp).read_bytes(); os.unlink(pp); os.unlink(tp)
             warn=" WARN-tiny" if len(txt)<200 else ""
-            if a.dry_run: print(f"  [{i}/{len(todo)}] {k} (dry) -> {txtname} ({len(txt)}b){warn}"); ok+=1; continue
+            if a.dry_run or not a.commit: print(f"  [{i}/{len(todo)}] {k} (dry) -> {txtname} ({len(txt)}b){warn}"); ok+=1; continue
             akey,how=upload_txt(k,txtname,txt)
             print(f"  [{i}/{len(todo)}] {k} -> TXT {akey} {how} ({len(txt)//1024}kb){warn} :: {txtname[:48]}")
             ok+=1; time.sleep(0.3)

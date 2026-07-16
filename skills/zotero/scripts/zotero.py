@@ -77,13 +77,16 @@ def _load_dotenv() -> None:
 def resolve_config(args: argparse.Namespace) -> dict[str, str]:
     _load_dotenv()
     cfg = {
-        "api_key": args.api_key or os.environ.get("ZOTERO_API_KEY", ""),
+        "api_key": (args.api_key or os.environ.get("ZOTERO_API_KEY_RO")
+                    or os.environ.get("ZOTERO_API_KEY") or os.environ.get("ZOTERO_API_KEY_RW", "")),
+        "write_key": (args.api_key or os.environ.get("ZOTERO_API_KEY_RW")
+                      or os.environ.get("ZOTERO_API_KEY") or os.environ.get("ZOTERO_API_KEY_RO", "")),
         "library_id": args.library_id or os.environ.get("ZOTERO_LIBRARY_ID", ""),
         "library_type": (args.library_type or os.environ.get("ZOTERO_LIBRARY_TYPE", "user")).lower(),
         "collection": args.collection or os.environ.get("ZOTERO_COLLECTION_KEY", ""),
     }
     if not cfg["api_key"]:
-        sys.exit("error: missing ZOTERO_API_KEY (set env var or pass --api-key)")
+        sys.exit("error: missing Zotero API key (set ZOTERO_API_KEY_RO/_RW or ZOTERO_API_KEY, or pass --api-key)")
     if not cfg["library_id"]:
         sys.exit("error: missing ZOTERO_LIBRARY_ID (set env var or pass --library-id)")
     if cfg["library_type"] not in ("user", "group"):
@@ -260,7 +263,7 @@ def _write_request(cfg: dict[str, str], url: str, method: str, body: bytes,
     status so callers can handle 412 (version conflict) gracefully.
     """
     headers = {
-        "Zotero-API-Key": cfg["api_key"],
+        "Zotero-API-Key": cfg.get("write_key") or cfg["api_key"],
         "Zotero-API-Version": "3",
         "Content-Type": "application/json",
         "User-Agent": USER_AGENT,

@@ -19,9 +19,9 @@ Commands:
   prep "TITLE"                 full prep (find->confirm->union->normalize)
   prep --keys K1,K2,K3         prep an explicit set (skip the title search)
 
-Options: --dry-run  --target <itemType>  --no-openalex  --force (accept low-confidence)
+Options: --commit (WRITE — default is DRY-RUN)  --dry-run  --target <itemType>  --no-openalex  --force
 
-Env: ZOTERO_API_KEY, ZOTERO_LIBRARY_ID, ZOTERO_LIBRARY_TYPE(group|user).
+Env: ZOTERO_API_KEY_RW (writes; legacy ZOTERO_API_KEY still works), ZOTERO_LIBRARY_ID, ZOTERO_LIBRARY_TYPE(group|user).
 """
 import argparse
 import difflib
@@ -34,7 +34,7 @@ import urllib.request
 import urllib.error
 from collections import defaultdict
 
-KEY = os.environ["ZOTERO_API_KEY"]
+KEY = (os.environ.get("ZOTERO_API_KEY_RW") or os.environ.get("ZOTERO_API_KEY") or os.environ.get("ZOTERO_API_KEY_RO", ""))
 LIB = os.environ["ZOTERO_LIBRARY_ID"]
 LT = os.environ.get("ZOTERO_LIBRARY_TYPE", "group")
 BASE = f"https://api.zotero.org/{'groups' if LT.startswith('g') else 'users'}/{LIB}"
@@ -324,7 +324,7 @@ def cmd_scan(a):
         print("\n--- prepping each group ---")
         for g in groups:
             ns = argparse.Namespace(title="", keys=",".join(it["key"] for it in g),
-                                    target=a.target, dry_run=a.dry_run,
+                                    target=a.target, dry_run=(a.dry_run or not getattr(a, "commit", False)),
                                     no_openalex=a.no_openalex, force=True)
             cmd_prep(ns)
 
@@ -360,10 +360,10 @@ def cmd_prep(a):
           f"(authors={len(union['creators'])}, abstract={'y' if union['abstractNote'] else 'n'}, "
           f"DOI={union.get('DOI') or '-'})")
     for it in items:
-        keys, ct = convert_and_apply(it, target, union, a.dry_run)
+        keys, ct = convert_and_apply(it, target, union, a.dry_run or not getattr(a, "commit", False))
         tag = "CONVERT+union" if ct else "union"
         print(f"  {it['key']} [{it['data']['itemType']}->{target}] {tag}: set {keys}")
-    print("\n" + ("(dry-run — no writes)" if a.dry_run else
+    print("\n" + ("(dry-run — no writes)" if (a.dry_run or not getattr(a, "commit", False)) else
                   "Done. All records now share identical metadata + type — run Zotero 'Merge Items' safely."))
 
 
@@ -378,6 +378,7 @@ def main():
     pp.add_argument("--keys", default="")
     pp.add_argument("--target", default="")
     pp.add_argument("--dry-run", action="store_true")
+    pp.add_argument("--commit", action="store_true", help="actually write (default: dry-run, no writes)")
     pp.add_argument("--no-openalex", action="store_true")
     pp.add_argument("--force", action="store_true")
     pp.set_defaults(func=cmd_prep)
@@ -386,6 +387,7 @@ def main():
     ps2.add_argument("--prep", action="store_true", help="also prep every group found")
     ps2.add_argument("--target", default="")
     ps2.add_argument("--dry-run", action="store_true")
+    ps2.add_argument("--commit", action="store_true", help="actually write (default: dry-run, no writes)")
     ps2.add_argument("--no-openalex", action="store_true")
     ps2.set_defaults(func=cmd_scan)
     a = ap.parse_args()

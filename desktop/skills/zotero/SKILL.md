@@ -75,6 +75,8 @@ The full Zotero item object carries `library`/`links`/`meta`/`relations` blocks 
 - For counts, use `count` — it returns a bare integer, never item bodies.
 - For listing, prefer `--format table` (compact key/title/date columns) or `--fields title,date,creators` (compact JSON projected to just those `data` fields).
 - Reach for full `--format json` only when you genuinely need the complete object (e.g. applying the discard-collection filter, which needs `data.collections`).
+- **Cost model:** token spend is what lands in an **LLM context**, not the API call itself — cache hits, `count`, and deterministic script work are effectively free; spend comes from full item bodies reaching the reply. Project (`--fields`/`count`) before surfacing; pull the whole object only when a field genuinely needs it.
+- **Full text / attachments are separate, heavy calls** (`/items/<key>/children` to find the attachment + `/items/<attachKey>/file` to download the file body). Don't pull file bytes into context — use the **`zotero-pdf-to-text`** skill (reads local `~/Zotero/storage` first, idempotent, produces reusable `.txt`).
 
 ### Caching (fast repeat calls, fewer API hits)
 

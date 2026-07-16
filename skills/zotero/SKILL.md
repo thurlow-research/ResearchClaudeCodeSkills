@@ -29,6 +29,8 @@ The script looks for these values in the following order (first hit wins for fil
 
 The recommended setup is to keep a single `.env` at `~/.config/claude-zotero/.env`. That way the skill works from any directory and the file lives outside any git repo.
 
+**Read/write key split (least-privilege).** The script also accepts a split pair — `ZOTERO_API_KEY_RO` (reads) and `ZOTERO_API_KEY_RW` (writes, e.g. `tag-add --commit`): it prefers RO for reads and RW for writes, and falls back to a single `ZOTERO_API_KEY` if that's all that's set. Prefer the split so read-only work never carries a write-capable key.
+
 If any required variable is missing when the skill is first used, ask the user to supply it. Do not invent values.
 
 ## The CLI
@@ -61,6 +63,8 @@ The full Zotero item object carries `library`/`links`/`meta`/`relations` blocks 
 - For counts, use `count` — it returns a bare integer, never item bodies.
 - For listing, prefer `--format table` (compact key/title/date columns) or `--fields title,date,creators` (compact JSON projected to just those `data` fields).
 - Reach for full `--format json` only when you genuinely need the complete object (e.g. applying the discard-collection filter, which needs `data.collections`).
+- **Cost model:** token spend is what lands in an **LLM context**, not the API call itself — cache hits, `count`, and deterministic script work are effectively free; spend comes from full item bodies reaching the reply. Project (`--fields`/`count`) before surfacing; pull the whole object only when a field genuinely needs it.
+- **Full text / attachments are separate, heavy calls** (`/items/<key>/children` to find the attachment + `/items/<attachKey>/file` to download the file body). Don't pull file bytes into context — use the **`zotero-pdf-to-text`** skill (reads local `~/Zotero/storage` first, idempotent, produces reusable `.txt`).
 
 ### Caching (fast repeat calls, fewer API hits)
 
