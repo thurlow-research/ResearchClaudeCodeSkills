@@ -12,6 +12,7 @@ all driven by natural-language requests inside Claude Code.
 | **`zotero`** | Query & retrieve items, collections, tags from a Zotero library | Zotero API key |
 | **`zotero-merge-prep`** | Consolidate duplicates (union metadata + normalize item types) so Zotero's *Merge Items* is lossless | Zotero **write** key |
 | **`zotero-pdf-to-text`** | Convert each item's PDF into a TXT attachment for cheap AI reading | Zotero **write** key + `pdftotext` |
+| **`arxiv-zotero-import`** | Fetch arXiv API search results and create them as Zotero `preprint` items in a target collection | Zotero API key (read for lookups, **write** for `--apply`) |
 | **`semantic-scholar`** | Citation-graph search & backward/forward snowballing | S2 key (optional) |
 | **`openalex`** | Metadata/abstract/citation backstop, cached | OpenAlex key **(strongly advised)** |
 | **`exa`** | Open-web / grey-literature discovery (marketplace plugin) | Exa key / OAuth |
@@ -47,7 +48,7 @@ abstracts from OpenAlex"*, *"convert the PDFs in my Core collection to text"*, e
 ## Repository layout
 
 ```
-skills/      the 5 custom skills (SKILL.md + scripts + reference docs)
+skills/      the 6 custom skills (SKILL.md + scripts + reference docs)
 docs/        SETUP.md — full setup & reference guide
 releases/    build-output dir; the archive is published via GitHub Releases (not committed)
 scripts/     build-release.sh — regenerates the release archive from skills/
@@ -62,7 +63,7 @@ just clone and `cp -R skills/*` (above). Build it yourself with `scripts/build-r
 
 ## A typical review
 
-discover (`semantic-scholar`, `exa`) -> import (Zotero) -> enrich (`openalex`) ->
+discover (`semantic-scholar`, `exa`) -> import (Zotero, `arxiv-zotero-import`) -> enrich (`openalex`) ->
 de-duplicate (`zotero-merge-prep`) -> screen/triage (`zotero`) -> extract-prep (`zotero-pdf-to-text`).
 
 ## Security

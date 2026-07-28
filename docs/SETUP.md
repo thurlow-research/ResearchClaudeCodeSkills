@@ -45,7 +45,7 @@ unzip research-claude-code-skills.zip -d ~/.claude/skills/
 Then restart Claude Code so it discovers them. Verify:
 ```bash
 ls ~/.claude/skills
-#   openalex  semantic-scholar  zotero  zotero-merge-prep  zotero-pdf-to-text
+#   arxiv-zotero-import  openalex  semantic-scholar  zotero  zotero-merge-prep  zotero-pdf-to-text
 ```
 
 For **exa** (web/grey-lit discovery), install the marketplace plugin instead:
@@ -98,7 +98,7 @@ session won't see edits until you restart it or `source` the file in the shell i
 
 ---
 
-## 4. The six skills
+## 4. The seven skills
 
 ### Zotero — library operations
 
@@ -127,6 +127,22 @@ python3 scripts/pdf_to_text.py --collection KEY             # batch
 ```
 Env: `ZOTERO_API_KEY_RW` (falls back to `ZOTERO_API_KEY`) — needs write access. Requires `pdftotext`. DRY-RUN by default; pass `--commit` to upload.
 
+**`arxiv-zotero-import`** — fetch an arXiv API search query's results and create them as
+`preprint` items in a target Zotero collection (which must already exist). Shares its response
+cache with `zotero`.
+```bash
+python3 scripts/check_count.py "<arxiv-query>"                          # count only, no writes
+python3 scripts/fetch_arxiv_query.py --query "<arxiv-query>" \
+    --collection "Q-arXiv-NN" --workdir ~/slr/arxiv/q-arxiv-NN          # dry-run
+python3 scripts/fetch_arxiv_query.py --query "<arxiv-query>" \
+    --collection "Q-arXiv-NN" --workdir ~/slr/arxiv/q-arxiv-NN --apply  # write
+```
+Env: `ZOTERO_API_KEY_RO` (falls back to `ZOTERO_API_KEY`) for lookups/dry-run, `ZOTERO_API_KEY_RW`
+(falls back to `ZOTERO_API_KEY`) only for `--apply`, `ZOTERO_LIBRARY_ID`, `ZOTERO_LIBRARY_TYPE`
+(`group`|`user`; default `group`). No hard-coded fallback keys — the scripts fail loudly if
+unset. `check_count.py` needs no Zotero credentials at all (arXiv-only). DRY-RUN by default;
+pass `--apply` to write.
+
 ### External data sources
 
 **`semantic-scholar`** — citation-graph search & backward/forward snowballing (by topic/DOI/
@@ -153,7 +169,8 @@ Install via `/plugin install exa@claude-plugins-official`; auth via `/mcp` or `E
 ## 5. How they interlock (a typical review)
 
 1. **Discover** — `semantic-scholar` (citation snowball) + `exa` (open web) surface candidates.
-2. **Import** — into Zotero.
+2. **Import** — into Zotero (`arxiv-zotero-import` for arXiv API queries; RIS/other sources import
+   via the Zotero client directly).
 3. **Enrich** — `openalex` backfills missing abstracts/DOIs/URLs.
 4. **De-duplicate** — `zotero-merge-prep` consolidates cross-type dups; merge in the client.
 5. **Screen / triage** — `zotero` queries drive the keep/maybe/discard and core/context stages.
