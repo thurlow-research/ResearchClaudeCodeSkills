@@ -12,6 +12,7 @@ all driven by natural-language requests inside Claude Code.
 | **`zotero`** | Query & retrieve items, collections, tags from a Zotero library | Zotero API key |
 | **`zotero-merge-prep`** | Consolidate duplicates (union metadata + normalize item types) so Zotero's *Merge Items* is lossless | Zotero **write** key |
 | **`zotero-pdf-to-text`** | Convert each item's PDF into a TXT attachment for cheap AI reading | Zotero **write** key + `pdftotext` |
+| **`arxiv`** | Query arXiv API search results and build a Zotero create-items plan (query-only — the `zotero` skill's `create-items` does the actual write) | Zotero **read** key only |
 | **`semantic-scholar`** | Citation-graph search & backward/forward snowballing | S2 key (optional) |
 | **`openalex`** | Metadata/abstract/citation backstop, cached | OpenAlex key **(strongly advised)** |
 | **`exa`** | Open-web / grey-literature discovery (marketplace plugin) | Exa key / OAuth |
@@ -34,6 +35,10 @@ abstracts from OpenAlex"*, *"convert the PDFs in my Core collection to text"*, e
 
 **Full setup, per-skill reference, and gotchas -> [`docs/SETUP.md`](docs/SETUP.md).**
 
+**Setting up the full research environment (this repo + Exa + external connectors like alphaXiv/
+Scite/Scholar Gateway, on both Claude Code and Claude Desktop) ->
+[`docs/RESEARCH_ENVIRONMENT.md`](docs/RESEARCH_ENVIRONMENT.md).**
+
 > **Get an OpenAlex API key.** OpenAlex is credit-metered; without a key you'll be throttled
 > (HTTP 429) on any real workload (anonymous ~100 req/day). A free key (~30-sec signup at
 > openalex.org/settings/api) raises it ~10x and is the difference between the skill working and
@@ -47,8 +52,9 @@ abstracts from OpenAlex"*, *"convert the PDFs in my Core collection to text"*, e
 ## Repository layout
 
 ```
-skills/      the 5 custom skills (SKILL.md + scripts + reference docs)
+skills/      the 6 custom skills (SKILL.md + scripts + reference docs)
 docs/        SETUP.md — full setup & reference guide
+             RESEARCH_ENVIRONMENT.md — full environment incl. external MCP connectors, both platforms
 releases/    build-output dir; the archive is published via GitHub Releases (not committed)
 scripts/     build-release.sh — regenerates the release archive from skills/
 .github/     CODEOWNERS
@@ -62,7 +68,7 @@ just clone and `cp -R skills/*` (above). Build it yourself with `scripts/build-r
 
 ## A typical review
 
-discover (`semantic-scholar`, `exa`) -> import (Zotero) -> enrich (`openalex`) ->
+discover (`semantic-scholar`, `exa`) -> import (Zotero, `arxiv`) -> enrich (`openalex`) ->
 de-duplicate (`zotero-merge-prep`) -> screen/triage (`zotero`) -> extract-prep (`zotero-pdf-to-text`).
 
 ## Security

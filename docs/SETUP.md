@@ -45,7 +45,7 @@ unzip research-claude-code-skills.zip -d ~/.claude/skills/
 Then restart Claude Code so it discovers them. Verify:
 ```bash
 ls ~/.claude/skills
-#   openalex  semantic-scholar  zotero  zotero-merge-prep  zotero-pdf-to-text
+#   arxiv  openalex  semantic-scholar  zotero  zotero-merge-prep  zotero-pdf-to-text
 ```
 
 For **exa** (web/grey-lit discovery), install the marketplace plugin instead:
@@ -98,7 +98,7 @@ session won't see edits until you restart it or `source` the file in the shell i
 
 ---
 
-## 4. The six skills
+## 4. The seven skills
 
 ### Zotero — library operations
 
@@ -108,6 +108,9 @@ lineage; the read layer for PRISMA/screening reporting).
 python3 ~/.claude/skills/zotero/scripts/zotero.py --help
 ```
 Env: `ZOTERO_API_KEY_RO` (falls back to `ZOTERO_API_KEY`), `ZOTERO_LIBRARY_ID`, `ZOTERO_LIBRARY_TYPE`.
+`tag-add`/`collection-add`/`collection-remove`/`create-items` (writes) additionally need
+`ZOTERO_API_KEY_RW`. `create-items` is the shared write path for query-only import skills
+(e.g. `arxiv`) — see that skill's own entry below for the two-step usage.
 
 **`zotero-merge-prep`** — make duplicates safe to merge. Zotero's native *Merge Items* keeps only
 the master's fields and won't group different item types (preprint vs journal). This unions
@@ -126,6 +129,25 @@ python3 scripts/pdf_to_text.py --collection KEY --limit 1   # ALWAYS test one
 python3 scripts/pdf_to_text.py --collection KEY             # batch
 ```
 Env: `ZOTERO_API_KEY_RW` (falls back to `ZOTERO_API_KEY`) — needs write access. Requires `pdftotext`. DRY-RUN by default; pass `--commit` to upload.
+
+**`arxiv`** — query-only: fetch an arXiv API search query's results and build a create-items
+plan targeting a Zotero collection (which must already exist). Never writes to Zotero itself —
+hands the plan to `zotero create-items` below. Shares its response cache with `zotero`.
+```bash
+python3 scripts/check_count.py "<arxiv-query>"                              # count only, no writes
+python3 scripts/fetch_arxiv_query.py --query "<arxiv-query>" \
+    --collection "Q-arXiv-NN" --workdir ~/slr/arxiv/q-arxiv-NN              # writes create_plan.json
+
+# then, to actually create the items (dry-run by default):
+python3 ~/.claude/skills/zotero/scripts/zotero.py create-items \
+    --plan ~/slr/arxiv/q-arxiv-NN/create_plan.json \
+    --state ~/slr/arxiv/q-arxiv-NN/state.json --commit
+```
+Env: `ZOTERO_API_KEY_RO` (falls back to `ZOTERO_API_KEY`) for the one collection lookup,
+`ZOTERO_LIBRARY_ID`, `ZOTERO_LIBRARY_TYPE` (`group`|`user`; default `group`). No hard-coded
+fallback keys — the script fails loudly if unset. `check_count.py` needs no Zotero credentials
+at all (arXiv-only, and arXiv itself needs no key either). The `zotero create-items` step needs
+`ZOTERO_API_KEY_RW` — see below.
 
 ### External data sources
 
@@ -153,7 +175,8 @@ Install via `/plugin install exa@claude-plugins-official`; auth via `/mcp` or `E
 ## 5. How they interlock (a typical review)
 
 1. **Discover** — `semantic-scholar` (citation snowball) + `exa` (open web) surface candidates.
-2. **Import** — into Zotero.
+2. **Import** — into Zotero (`arxiv` + `zotero create-items` for arXiv API queries; RIS/other
+   sources import via the Zotero client directly).
 3. **Enrich** — `openalex` backfills missing abstracts/DOIs/URLs.
 4. **De-duplicate** — `zotero-merge-prep` consolidates cross-type dups; merge in the client.
 5. **Screen / triage** — `zotero` queries drive the keep/maybe/discard and core/context stages.
