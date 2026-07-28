@@ -1308,6 +1308,102 @@ def cmd_tag_add(cfg, args):
 
 
 # ---------------------------------------------------------------------------
+# Write operations (item creation)
+# ---------------------------------------------------------------------------
+#
+# The general-purpose write path for any "fetch external records, create them in
+# Zotero" skill (e.g. arxiv; future OpenAlex/other-source import
+# skills). Those skills stay query-only — they emit a plan file here rather than
+# writing to Zotero themselves.
+
+CREATE_ITEMS_BATCH_SIZE = 50  # Zotero's write-batch cap
+
+
+def _atomic_write_json(path: Path, obj: Any) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2))
+    tmp.replace(path)
+
+
+def _load_create_state(path: Path) -> dict:
+    if not path.exists():
+        return {"created": []}
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {"created": []}
+
+
+def cmd_create_items(cfg, args):
+    """Create new items from a plan file. DRY-RUN by default; pass --commit to write.
+
+    Plan file format (JSON array):
+        [{"dedupe_key": "<source>:<id>", "item": {...Zotero item data...}}, ...]
+
+    `dedupe_key` is caller-defined (e.g. "arxiv:2405.01234", "openalex:W123456789")
+    and used only for resume/idempotency tracking across interrupted runs — it is
+    never sent to Zotero. Progress is persisted to --state (default:
+    <plan>.state.json next to the plan file), so re-running the same plan after an
+    interruption skips whatever already succeeded.
+    """
+    plan_path = Path(args.plan)
+    entries = json.loads(plan_path.read_text())
+    state_path = Path(args.state) if args.state else plan_path.with_suffix(plan_path.suffix + ".state.json")
+    state = _load_create_state(state_path)
+    created_keys = set(state.get("created", []))
+
+    remaining = [e for e in entries if e.get("dedupe_key") not in created_keys]
+    already_created = len(entries) - len(remaining)
+
+    commit = args.commit
+    results = []
+    for start in range(0, len(remaining), CREATE_ITEMS_BATCH_SIZE):
+        batch = remaining[start:start + CREATE_ITEMS_BATCH_SIZE]
+        if not commit:
+            results.extend({"dedupe_key": e.get("dedupe_key"), "status": "would-create"} for e in batch)
+            continue
+
+        items = [e["item"] for e in batch]
+        status, rbody, _ = _write_request(cfg, _url(cfg, "/items", None), "POST",
+                                          json.dumps(items).encode("utf-8"))
+        if status not in (200, 204):
+            detail = rbody.decode("utf-8", "replace")[:200]
+            results.extend({"dedupe_key": e.get("dedupe_key"), "status": f"error-http-{status}",
+                            "detail": detail} for e in batch)
+            continue
+
+        resp = json.loads(rbody)
+        for idx_str, created in resp.get("successful", {}).items():
+            dk = batch[int(idx_str)].get("dedupe_key")
+            results.append({"dedupe_key": dk, "status": "created", "key": created.get("key")})
+            if dk:
+                created_keys.add(dk)
+        for idx_str, err in resp.get("failed", {}).items():
+            results.append({"dedupe_key": batch[int(idx_str)].get("dedupe_key"),
+                            "status": "error", "detail": str(err)[:200]})
+
+        state["created"] = sorted(created_keys)
+        _atomic_write_json(state_path, state)
+
+    if commit and any(r["status"] == "created" for r in results):
+        _invalidate_cache(cfg)
+
+    summary: dict[str, int] = {}
+    for r in results:
+        summary[r["status"]] = summary.get(r["status"], 0) + 1
+
+    out = {
+        "mode": "COMMIT" if commit else "DRY-RUN (no changes written; pass --commit to apply)",
+        "plan_entries": len(entries),
+        "already_created_skipped": already_created,
+        "processed": len(remaining),
+        "summary": summary,
+        "results": results,
+    }
+    _print(out, args.format)
+
+
+# ---------------------------------------------------------------------------
 # argparse wiring
 # ---------------------------------------------------------------------------
 
@@ -1460,6 +1556,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--commit", action="store_true", help="Actually write the changes (otherwise dry-run).")
     sp.add_argument("--format", choices=["json", "table"], default="json")
     sp.set_defaults(func=cmd_collection_remove)
+
+    sp = sub.add_parser(
+        "create-items",
+        help="Create new items from a plan file (DRY-RUN unless --commit). Write-scoped key. "
+             "For query-only import skills (e.g. arxiv) to hand off writes to.",
+    )
+    sp.add_argument("--plan", required=True,
+                    help='JSON array: [{"dedupe_key": "...", "item": {...Zotero item data...}}, ...]')
+    sp.add_argument("--state", help="Resume-state file (default: <plan>.state.json).")
+    sp.add_argument("--commit", action="store_true", help="Actually write the changes (otherwise dry-run).")
+    sp.add_argument("--format", choices=["json", "table"], default="json")
+    sp.set_defaults(func=cmd_create_items)
 
     return p
 
