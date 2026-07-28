@@ -1,33 +1,29 @@
 # Setting Up the Ideal Research Environment
 
-This repo's six skills (`zotero`, `zotero-merge-prep`, `zotero-pdf-to-text`, `arxiv`,
-`semantic-scholar`, `openalex`) plus the `exa` plugin cover the SLR pipeline end to end:
-discover -> import -> enrich -> de-duplicate -> screen -> extract-prep. This doc adds the
-remaining piece — a handful of **external MCP connectors** that extend the same environment
-with paper discovery, citation verification, and full-text access — and walks through getting
-the whole thing running on **Claude Code** and on **Claude Desktop / claude.ai**, since the two
-platforms wire credentials and connectors up differently.
+This repo's six skills plus the `exa` plugin cover the SLR pipeline end to end (see the
+[repo README](../README.md#a-typical-review) for that pipeline) — this doc adds the
+remaining piece, a handful of **external MCP connectors** that extend the same environment
+with paper discovery, citation verification, and full-text access, and walks through getting
+the *whole* environment running on **Claude Code** and on **Claude Desktop / claude.ai**,
+since the two platforms wire credentials and connectors up differently.
 
-## The full toolset
+This is the map; it delegates to the docs that already own each piece rather than repeating
+them: [`README.md`](../README.md) and [`docs/SETUP.md`](SETUP.md) for the repo's own 6 skills
++ `exa`, [`desktop/README.md`](../desktop/README.md) for the Desktop packaging of both.
 
-| Tool | What it adds | Kind | Auth |
-|---|---|---|---|
-| `zotero` | query/retrieve + `create-items` write path (the shared write target for query-only import skills) | repo skill | Zotero API key (RO for reads, RW for writes) |
-| `zotero-merge-prep` | consolidate duplicates before Zotero's native merge | repo skill | Zotero **write** key |
-| `zotero-pdf-to-text` | PDF -> TXT attachments for cheap AI reading | repo skill | Zotero **write** key + `pdftotext` |
-| `arxiv` | query arXiv, emit a Zotero create-items plan (query-only, no write key) | repo skill | Zotero **read** key only |
-| `semantic-scholar` | citation-graph search & snowballing | repo skill | S2 key (optional) |
-| `openalex` | metadata/abstract/citation backstop | repo skill | OpenAlex key (strongly advised) |
-| `exa` | open-web / grey-literature discovery | marketplace plugin (Code) / connector (Desktop) | Exa key or OAuth |
-| alphaXiv | paper reading, discovery (`discover_papers`), PDF/codebase analysis | MCP connector | OAuth (or API key, single-user only) |
-| Scite | citation classification — is a claim *supported*, *contrasted*, or just *mentioned* by later work | MCP connector | OAuth |
-| Scholar Gateway | scholarly full-text/search gateway | MCP connector | account connector (set up once, syncs everywhere) |
-| papersflow | paper workflow tooling (`doxa.papersflow.ai`) | MCP connector | pending — authenticates on first use |
+## The external MCP connectors
 
-None of the four MCP connectors are part of this repo — they're hosted services you connect to
-directly, independent of anything in `skills/`. They sit at the discovery/verification/synthesis
-ends of the pipeline, alongside `exa`/`semantic-scholar` and after `zotero-pdf-to-text`,
+These are not part of this repo — they're hosted services you connect to directly, with no
+relationship to anything in `skills/`. They sit at the discovery/verification/synthesis ends
+of the pipeline, alongside `exa`/`semantic-scholar` and after `zotero-pdf-to-text`,
 respectively — not in the middle of the Zotero import/dedupe chain.
+
+| Connector | What it adds | Auth |
+|---|---|---|
+| alphaXiv | paper reading, discovery (`discover_papers`), PDF/codebase analysis | OAuth (or API key, single-user only) |
+| Scite | citation classification — is a claim *supported*, *contrasted*, or just *mentioned* by later work | OAuth |
+| Scholar Gateway | scholarly full-text/search gateway | account connector (set up once, syncs everywhere) |
+| papersflow | paper workflow tooling (`doxa.papersflow.ai`) | pending — authenticates on first use |
 
 **A note on evaluating new connectors before adding them.** Before registering anything here,
 check whether it's a genuine hosted API from an identifiable provider (the four above all are)
@@ -45,26 +41,11 @@ recommending it.
 
 ## How to set up for Claude Code
 
-### 1. Install this repo's skills
-```bash
-mkdir -p ~/.claude/skills
-cp -R skills/* ~/.claude/skills/
-# ...or from a release: unzip research-claude-code-skills.zip -d ~/.claude/skills/
-```
-Restart Claude Code, then verify:
-```bash
-ls ~/.claude/skills
-#   arxiv  openalex  semantic-scholar  zotero  zotero-merge-prep  zotero-pdf-to-text
-```
-Full per-skill reference and env-var setup: [`docs/SETUP.md`](SETUP.md).
+### 1. Install this repo's skills + the Exa plugin
+See [`docs/SETUP.md` §2](SETUP.md#2-install-the-skills) — `cp -R skills/* ~/.claude/skills/`
+(or the release zip), then `/plugin install exa@claude-plugins-official`.
 
-### 2. Install the Exa plugin
-Inside Claude Code:
-```
-/plugin install exa@claude-plugins-official
-```
-
-### 3. Connect the external MCP servers
+### 2. Connect the external MCP servers
 alphaXiv, Scite, and Scholar Gateway are **account-level Connectors** — set them up once via
 Settings -> Connectors on claude.ai or the Desktop app (see the Desktop section below) and they
 sync into Claude Code automatically. You don't need to run `claude mcp add` for these unless you
@@ -85,50 +66,40 @@ Any of these will show `! Needs authentication` until first use, at which point 
 OAuth browser flow (or, for alphaXiv, you can instead pass a non-interactive API key with
 `--header "Authorization: Bearer <key>"` — see its docs at alphaxiv.org/docs/mcp).
 
-Verify everything:
-```bash
-claude mcp list
-```
+Verify everything: `claude mcp list`.
 
-### 4. Set your API keys
-See [`docs/SETUP.md` section 3](SETUP.md#3-environment-variables) — a `.envrc`/shell-rc block
-for `ZOTERO_API_KEY_RO`/`_RW`, `ZOTERO_LIBRARY_ID`, `OPENALEX_API_KEY`,
-`SEMANTIC_SCHOLAR_API_KEY`, `EXA_API_KEY`. Restart Claude Code (or `direnv allow .`) after editing.
+### 3. Set your API keys
+See [`docs/SETUP.md` §3](SETUP.md#3-environment-variables) for the repo skills' env vars
+(`ZOTERO_API_KEY_RO`/`_RW`, `ZOTERO_LIBRARY_ID`, `OPENALEX_API_KEY`,
+`SEMANTIC_SCHOLAR_API_KEY`, `EXA_API_KEY`).
 
 ---
 
 ## How to set up for Claude Desktop
 
-### 1. Enable code execution + network access
-Settings -> Capabilities: turn on **code execution** (required to run any uploaded skill), and
-set network access to **All domains** (the skills call the Zotero/Semantic Scholar/OpenAlex APIs;
-the default "package managers only" blocks them).
+### 1. Install this repo's skills + Exa
+See [`desktop/README.md`](../desktop/README.md) end to end — enabling code execution/network
+access, uploading each skill zip from `desktop/zips/`, providing API keys via project/global
+instructions, and adding **Exa** as a Connector (it's a hosted MCP server, not a skill zip).
 
-### 2. Upload this repo's skills
-Settings -> Capabilities -> Skills -> Upload skill, one zip at a time from
-[`desktop/zips/`](../desktop/zips) — install only the ones you need. Full detail, including why
-these zips differ from the Claude Code versions (credentials come from project instructions, not
-shell env vars), is in [`desktop/README.md`](../desktop/README.md).
+### 2. Add the other three connectors
+Same Connectors flow as Exa — Settings -> Connectors (or the Plugins tab) -> search the name and
+install, or **Add custom connector** and paste the URL directly:
+- alphaXiv: `https://api.alphaxiv.org/mcp/v1`
+- Scite: `https://api.scite.ai/mcp`
+- papersflow: `https://doxa.papersflow.ai/mcp`
 
-### 3. Provide your API keys
-Add a block to the Claude **project instructions** (or global preferences) — never a stored
-write-scoped Zotero key if others will use the project; see
-[`desktop/README.md`](../desktop/README.md#provide-your-api-keys) for the exact block and the
-reasoning (no secure secret storage in instructions).
+(Scholar Gateway is typically already present as an account connector — check Settings ->
+Connectors before adding it again.) Fully quit and reopen the app afterward — a window reload
+doesn't pick up a new connector.
 
-### 4. Add the connectors
-- **Exa, alphaXiv, Scite, Scholar Gateway**: Settings -> Connectors (or the Plugins tab) -> search
-  the name and install, or **Add custom connector** and paste the URL directly
-  (`https://mcp.exa.ai/mcp`, `https://api.alphaxiv.org/mcp/v1`, `https://api.scite.ai/mcp`).
-  Fully quit and reopen the app afterward — a window reload doesn't pick up a new connector.
-- **papersflow**: same flow, Add custom connector -> `https://doxa.papersflow.ai/mcp`.
-- Prefer **OAuth sign-in** over pasting an API key into the URL for anything set up on a shared
-  or team project — an embedded key in a connector URL is visible to anyone the project is
-  shared with; OAuth lets each person authenticate with their own account instead.
+Prefer **OAuth sign-in** over pasting an API key into a connector URL for anything set up on a
+shared or team project — an embedded key is visible to anyone the project is shared with; OAuth
+lets each person authenticate with their own account instead.
 
-Since account-level Connectors sync to Claude Code automatically (see the Code section above),
-setting these up once in Desktop covers both platforms for the four MCP connectors — only the
-repo's own skills and Exa need a separate install step per platform.
+Since account-level Connectors sync to Claude Code automatically, setting these up once in
+Desktop covers both platforms — only the repo's own skills need a separate install step per
+platform.
 
 ---
 
