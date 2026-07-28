@@ -2,13 +2,15 @@
 """
 Shared Zotero API helpers for SLR dedup scripts.
 
+Query-only: this module never writes to Zotero. It only needs a read-only key
+to resolve the target collection before handing off a create-items plan to the
+main `zotero` skill's `zotero.py create-items` (which does the actual write).
 Reads credentials from environment variables only — no hard-coded fallback
 keys. This file is distributed as part of a shareable .skill package, so it
 must never embed live credentials.
 
 Required env vars:
     ZOTERO_API_KEY_RO    — read-only API key
-    ZOTERO_API_KEY_RW    — read/write key (only needed for --apply operations)
     ZOTERO_LIBRARY_ID    — Zotero library ID (group or user)
 
 Optional:
@@ -35,9 +37,6 @@ def _require(name):
     return val
 
 API_KEY_RO = _require("ZOTERO_API_KEY_RO")
-# RW is optional at import time — only needed for --apply; enforced lazily in zot_request
-# so dry-run and check_count usage never require a write-scoped key to be present.
-API_KEY_RW = os.environ.get("ZOTERO_API_KEY_RW", "")
 LIB_ID     = _require("ZOTERO_LIBRARY_ID")
 LIB_TYPE   = os.environ.get("ZOTERO_LIBRARY_TYPE", "group").lower()
 if LIB_TYPE not in ("user", "group"):
@@ -304,21 +303,6 @@ def find_collection_by_name(name, collections=None):
         if c["name"] == name:
             return c["key"]
     return None
-
-def update_item(item_key, item_data, version, api_key=None):
-    """PATCH an item with new fields. Uses If-Unmodified-Since-Version for safety."""
-    key = api_key or API_KEY_RW
-    if not key:
-        sys.exit("error: missing ZOTERO_API_KEY_RW (required for write operations)")
-    headers = {"If-Unmodified-Since-Version": str(version)}
-    ok, resp, hdrs = zot_request(
-        "PATCH",
-        f"/items/{item_key}",
-        body=item_data,
-        api_key=key,
-        headers=headers,
-    )
-    return ok, resp
 
 def get_item(item_key):
     """Fetch a single item (full record including current version)."""

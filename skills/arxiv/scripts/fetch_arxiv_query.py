@@ -1,29 +1,32 @@
 #!/usr/bin/env python3
 """
-Fetch arXiv API results and create Zotero items in a target collection.
+Fetch arXiv API results and emit a Zotero create-items plan for a target collection.
+
+Query-only: this script never writes to Zotero. It fetches results, resolves the
+target collection (read-only), and writes a plan file. Creating the items is a
+separate step through the main `zotero` skill's `zotero.py create-items`, which
+owns all Zotero write plumbing (auth, batching, retries, resume) in one place.
 
 Generalized version of fetch_q_arxiv_06.py / fetch_q_arxiv_07.py — pass the
 query string, target collection name, and working directory as arguments.
 
 Output (in --workdir):
     arxiv_results.json    — full arXiv fetch results (cached for resume)
-    state.json            — resume checkpoint for Zotero creation
-    create_plan.csv       — what would be created (dry-run) or was created (apply)
+    create_plan.csv       — human-readable preview of what would be created
+    create_plan.json      — machine plan for `zotero.py create-items`
     fetch.log             — execution log
 
 Usage:
-    # Dry-run: fetch + show plan, no Zotero writes
     python3 fetch_arxiv_query.py \\
         --query "<arxiv-query>" \\
         --collection "Q-arXiv-NN" \\
         --workdir ~/slr/arxiv/q-arxiv-NN
 
-    # Apply: actually create items via RW key
-    python3 fetch_arxiv_query.py \\
-        --query "<arxiv-query>" \\
-        --collection "Q-arXiv-NN" \\
-        --workdir ~/slr/arxiv/q-arxiv-NN \\
-        --apply
+    # Then, to actually create the items (dry-run by default):
+    python3 <path-to-zotero-skill>/scripts/zotero.py create-items \\
+        --plan ~/slr/arxiv/q-arxiv-NN/create_plan.json \\
+        --state ~/slr/arxiv/q-arxiv-NN/state.json \\
+        --commit
 """
 import argparse
 import csv
@@ -48,9 +51,6 @@ ARXIV_PAGE_SIZE = 100        # arXiv's documented cap is 2000, but they recommen
                              # queries over ~1000 results; 100 halves round trips vs. the old
                              # 50 without pushing into that territory
 ARXIV_RATE_LIMIT_SEC = 3.0   # arXiv API requests >=3s apart
-
-ZOTERO_RATE_LIMIT_SEC = 0.3
-ZOTERO_CREATE_BATCH_SIZE = 50  # Zotero's actual write-batch cap
 
 NS = {
     "atom": "http://www.w3.org/2005/Atom",
@@ -235,54 +235,16 @@ def build_zotero_item(entry, collection_key):
         "tags": [{"tag": "source:arxiv-api"}],
     }
 
+def build_plan_entry(entry, collection_key):
+    """Wrap a Zotero item in the {dedupe_key, item} shape zotero.py create-items expects."""
+    return {"dedupe_key": f"arxiv:{entry['arxiv_id']}", "item": build_zotero_item(entry, collection_key)}
+
 def write_plan_csv(entries, path):
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["action", "arxiv_id", "title", "date", "doi", "url"])
         for e in entries:
             w.writerow(["CREATE", e["arxiv_id"], e["title"][:200], e["date"], e["doi"], e["url_html"]])
-
-# ============================================================
-# CREATE ITEMS
-# ============================================================
-def create_items(entries, collection_key, state_path):
-    if not zc.API_KEY_RW:
-        sys.exit("error: missing ZOTERO_API_KEY_RW (required for --apply)")
-    zc.log(f"\nCreating {len(entries)} items in Zotero...")
-    state = zc.load_json(state_path) or {"created_arxiv_ids": []}
-    created = set(state["created_arxiv_ids"])
-    remaining = [e for e in entries if e["arxiv_id"] not in created]
-    zc.log(f"  Already created in prior script run: {len(created)}; remaining: {len(remaining)}")
-    
-    successes = 0
-    failures = []
-    for batch_start in range(0, len(remaining), ZOTERO_CREATE_BATCH_SIZE):
-        batch = remaining[batch_start:batch_start + ZOTERO_CREATE_BATCH_SIZE]
-        items = [build_zotero_item(e, collection_key) for e in batch]
-        ok, resp, _ = zc.zot_request("POST", "/items", body=items, api_key=zc.API_KEY_RW)
-        if not ok:
-            zc.log(f"  BATCH FAILED ({batch_start}): {resp}")
-            failures.append((batch_start, str(resp)[:500]))
-            break
-        
-        succ = resp.get("successful", {})
-        fail = resp.get("failed", {})
-        for idx_str in succ:
-            idx = int(idx_str)
-            created.add(batch[idx]["arxiv_id"])
-            successes += 1
-        for idx_str, fail_data in fail.items():
-            idx = int(idx_str)
-            failures.append((batch[idx]["arxiv_id"], fail_data))
-            zc.log(f"  FAIL {batch[idx]['arxiv_id']}: {fail_data}")
-        
-        state["created_arxiv_ids"] = sorted(created)
-        zc.save_json(state_path, state)
-        zc.log(f"  Batch {batch_start//ZOTERO_CREATE_BATCH_SIZE + 1}: success+={len(succ)}, fail+={len(fail)}; total created={successes}")
-        time.sleep(ZOTERO_RATE_LIMIT_SEC)
-    
-    zc.log(f"\nCreate complete. Successes: {successes}, Failures: {len(failures)}")
-    return successes, failures
 
 # ============================================================
 # MAIN
@@ -293,25 +255,22 @@ def main():
     parser.add_argument("--query", required=True, help="arXiv search query string")
     parser.add_argument("--collection", required=True,
                         help="Target Zotero collection name (must exist)")
-    parser.add_argument("--workdir", default=".", help="Working directory for state/output files")
-    parser.add_argument("--apply", action="store_true",
-                        help="Actually create items in Zotero. Default is dry-run.")
+    parser.add_argument("--workdir", default=".", help="Working directory for output files")
     args = parser.parse_args()
-    
+
     workdir = os.path.expanduser(args.workdir)
     os.makedirs(workdir, exist_ok=True)
     os.chdir(workdir)
-    
+
     zc.set_log_file("fetch.log")
-    zc.log(f"=== arXiv → Zotero import ===")
+    zc.log(f"=== arXiv query (query-only; writes go through zotero.py create-items) ===")
     zc.log(f"Query:      {args.query}")
     zc.log(f"Collection: {args.collection}")
     zc.log(f"Workdir:    {workdir}")
-    zc.log(f"Mode:       {'APPLY' if args.apply else 'DRY-RUN'}")
-    
+
     entries = fetch_all_arxiv(args.query, "arxiv_results.json")
     zc.log(f"\nFetched {len(entries)} arXiv entries")
-    
+
     # Look up target collection. No separate "is it deleted" check: Zotero's
     # /collections listing has no trash/deleted state analogous to /items/trash —
     # anything list_all_collections() returns is live, so the extra GET was a
@@ -326,29 +285,21 @@ def main():
         zc.log(f"FATAL: target collection {args.collection!r} not found. Create it first.")
         sys.exit(1)
     zc.log(f"Target collection key: {coll_key}")
-    
+
     write_plan_csv(entries, "create_plan.csv")
-    zc.log(f"Plan written to create_plan.csv")
-    
-    zc.log(f"\nFirst 5 items planned for creation:")
+    plan = [build_plan_entry(e, coll_key) for e in entries]
+    zc.save_json("create_plan.json", plan)
+    zc.log(f"Plan written: create_plan.csv (preview), create_plan.json ({len(plan)} entries)")
+
+    zc.log(f"\nFirst 5 entries:")
     for e in entries[:5]:
         zc.log(f"  {e['arxiv_id']} ({e['date']}): {e['title'][:80]}")
-    
-    if not args.apply:
-        zc.log(f"\nDRY-RUN complete. Re-run with --apply to create items.")
-        return
-    
-    if not entries:
-        zc.log("\nNothing to create. Done.")
-        return
-    
-    successes, failures = create_items(entries, coll_key, "state.json")
-    if successes:
-        zc.invalidate_cache()
-    zc.log(f"\n=== DONE ===")
-    zc.log(f"Created: {successes} items in {args.collection}")
-    zc.log(f"Failures: {len(failures)}")
-    zc.log(f"\nNext step: Run Zotero client-side dedup on the library.")
+
+    zc.log(f"\nNext step — create the items via the zotero skill (dry-run by default):")
+    zc.log(f"  python3 <path-to-zotero-skill>/scripts/zotero.py create-items "
+           f"--plan {workdir}/create_plan.json --state {workdir}/state.json")
+    zc.log(f"  ...then add --commit to actually write. After writing, run Zotero's "
+           f"client-side dedup on the library.")
 
 if __name__ == "__main__":
     main()

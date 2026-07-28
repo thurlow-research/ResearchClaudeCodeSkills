@@ -12,7 +12,7 @@ all driven by natural-language requests inside Claude Code.
 | **`zotero`** | Query & retrieve items, collections, tags from a Zotero library | Zotero API key |
 | **`zotero-merge-prep`** | Consolidate duplicates (union metadata + normalize item types) so Zotero's *Merge Items* is lossless | Zotero **write** key |
 | **`zotero-pdf-to-text`** | Convert each item's PDF into a TXT attachment for cheap AI reading | Zotero **write** key + `pdftotext` |
-| **`arxiv-zotero-import`** | Fetch arXiv API search results and create them as Zotero `preprint` items in a target collection | Zotero API key (read for lookups, **write** for `--apply`) |
+| **`arxiv`** | Query arXiv API search results and build a Zotero create-items plan (query-only — the `zotero` skill's `create-items` does the actual write) | Zotero **read** key only |
 | **`semantic-scholar`** | Citation-graph search & backward/forward snowballing | S2 key (optional) |
 | **`openalex`** | Metadata/abstract/citation backstop, cached | OpenAlex key **(strongly advised)** |
 | **`exa`** | Open-web / grey-literature discovery (marketplace plugin) | Exa key / OAuth |
@@ -63,7 +63,7 @@ just clone and `cp -R skills/*` (above). Build it yourself with `scripts/build-r
 
 ## A typical review
 
-discover (`semantic-scholar`, `exa`) -> import (Zotero, `arxiv-zotero-import`) -> enrich (`openalex`) ->
+discover (`semantic-scholar`, `exa`) -> import (Zotero, `arxiv`) -> enrich (`openalex`) ->
 de-duplicate (`zotero-merge-prep`) -> screen/triage (`zotero`) -> extract-prep (`zotero-pdf-to-text`).
 
 ## Security
