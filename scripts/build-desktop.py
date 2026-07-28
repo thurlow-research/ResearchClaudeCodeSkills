@@ -130,6 +130,55 @@ Required: `ZOTERO_API_KEY` (a **WRITE** key — this edits records), `ZOTERO_LIB
             ),
         ),
     ],
+    "arxiv": [
+        (
+            """- Zotero credentials are **required environment variables** — no fallback defaults are
+  embedded in the scripts (this skill may be shared as a `.skill` package, so it must
+  never carry live keys). This skill only ever needs read access:
+  - `ZOTERO_API_KEY_RO` — read-only key, used for the one collection lookup
+  - `ZOTERO_LIBRARY_ID` — numeric group or user ID
+  - `ZOTERO_LIBRARY_TYPE` — `group` (default) or `user`
+  - (`ZOTERO_API_KEY_RW` belongs to the `zotero` skill's `create-items` step, not this one)
+- **Shares its response cache with the main `zotero` skill** — same directory
+  (`~/.cache/claude-zotero/<type>-<id>/`, override with `ZOTERO_CACHE_DIR`), same
+  version-validated key scheme (override the version-probe TTL with
+  `ZOTERO_CACHE_VERSION_TTL`, default 60s). The collection list this skill scans on every
+  run is cached under the identical key `zotero.py collections` uses, so either skill can
+  reuse the other's recent fetch.""",
+            block(
+                "ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # read-only key for the one collection lookup\n"
+                "ZOTERO_LIBRARY_ID=1234567\n"
+                "ZOTERO_LIBRARY_TYPE=group",
+                "ZOTERO_API_KEY_RO=... ZOTERO_LIBRARY_ID=... ZOTERO_LIBRARY_TYPE=group \\\n"
+                '  python3 scripts/fetch_arxiv_query.py --query "..." --collection "Q-arXiv-NN" '
+                "--workdir ~/slr/arxiv/q-arxiv-NN",
+            )
+            + """
+
+Caches (`~/.cache/claude-*`) last only as long as this sandbox container, so the
+collection-list sharing above only helps within one conversation, not across them.""",
+        ),
+        (
+            """```bash
+python3 <path-to-zotero-skill>/scripts/zotero.py create-items \\
+    --plan ~/slr/arxiv/q-arxiv-NN/create_plan.json \\
+    --state ~/slr/arxiv/q-arxiv-NN/state.json \\
+    --commit
+```""",
+            """```bash
+ZOTERO_API_KEY_RW=... ZOTERO_LIBRARY_ID=... ZOTERO_LIBRARY_TYPE=group \\
+  python3 <path-to-zotero-skill>/scripts/zotero.py create-items \\
+    --plan ~/slr/arxiv/q-arxiv-NN/create_plan.json \\
+    --state ~/slr/arxiv/q-arxiv-NN/state.json \\
+    --commit
+```
+
+This step needs the `zotero` skill installed too (its own uploaded copy in this
+environment), and a **write**-scoped `ZOTERO_API_KEY_RW`. Don't add that key to stored
+project/global instructions — ask the user to paste it into the chat for this one
+conversation instead.""",
+        ),
+    ],
     "zotero-pdf-to-text": [
         (
             """## Setup
