@@ -63,7 +63,13 @@ shell rc file. **Use your own keys; never commit or share a filled-in copy.**
 
 ```bash
 # --- Zotero (required for the three zotero skills) ---
-export ZOTERO_API_KEY=...            # your Zotero API key
+# Prefer a split RO/RW pair (least-privilege) over one key with both permissions:
+export ZOTERO_API_KEY_RO=...         # read-only key — used for all read operations
+export ZOTERO_API_KEY_RW=...         # write-scoped key — used only for writes (tag-add --commit,
+                                      # merge-prep, pdf-to-text); create two keys at
+                                      # zotero.org/settings/keys, one without write access
+# ...or set a single ZOTERO_API_KEY (legacy) if you don't want to split keys — every skill
+# falls back to it when the RO/RW-specific variable isn't set.
 export ZOTERO_LIBRARY_ID=...         # numeric group id, or your user id
 export ZOTERO_LIBRARY_TYPE=group     # 'group' or 'user'
 
@@ -82,7 +88,7 @@ export EXA_API_KEY=...               # for the exa plugin
 ### Where to get each key
 | Key | Where | Notes |
 |---|---|---|
-| `ZOTERO_API_KEY` / `LIBRARY_ID` | zotero.org/settings/keys → *Create new private key* | For a **group** library grant that group; check **write** if you'll create/modify items. Library id = the number in `groups/NNNNNN`, or your userID on the same page. |
+| `ZOTERO_API_KEY_RO` / `_RW` / `LIBRARY_ID` | zotero.org/settings/keys → *Create new private key* | Create two keys scoped to the same **group**: one read-only (`ZOTERO_API_KEY_RO`), one with **write** checked (`ZOTERO_API_KEY_RW`). A single `ZOTERO_API_KEY` also still works. Library id = the number in `groups/NNNNNN`, or your userID on the same page. |
 | `OPENALEX_API_KEY` | openalex.org/settings/api | **Strongly advised** (see box above). Free, 30-sec signup. |
 | `SEMANTIC_SCHOLAR_API_KEY` | semanticscholar.org/product/api | Free; optional. Raises rate limits. |
 | `EXA_API_KEY` | exa.ai → dashboard | For the plugin's API-key auth path. |
@@ -101,7 +107,7 @@ lineage; the read layer for PRISMA/screening reporting).
 ```bash
 python3 ~/.claude/skills/zotero/scripts/zotero.py --help
 ```
-Env: `ZOTERO_API_KEY`, `ZOTERO_LIBRARY_ID`, `ZOTERO_LIBRARY_TYPE`.
+Env: `ZOTERO_API_KEY_RO` (falls back to `ZOTERO_API_KEY`), `ZOTERO_LIBRARY_ID`, `ZOTERO_LIBRARY_TYPE`.
 
 **`zotero-merge-prep`** — make duplicates safe to merge. Zotero's native *Merge Items* keeps only
 the master's fields and won't group different item types (preprint vs journal). This unions
@@ -110,7 +116,7 @@ metadata + normalizes types first; you still run the merge in the client.
 python3 scripts/merge_prep.py scan COLLECTION_KEY [--prep]
 python3 scripts/merge_prep.py prep "Paper Title" | --keys K1,K2,K3
 ```
-Env: Zotero (a **write** key). Optional `OPENALEX_MAILTO`/`OPENALEX_API_KEY` for gap-fill.
+Env: `ZOTERO_API_KEY_RW` (falls back to `ZOTERO_API_KEY`) — needs write access. Optional `OPENALEX_MAILTO`/`OPENALEX_API_KEY` for gap-fill. DRY-RUN by default; pass `--commit` to write.
 
 **`zotero-pdf-to-text`** — give each item a TXT next to its PDF (plain text is far cheaper for AI
 reading). Sources the PDF locally or via API, runs `pdftotext`, uploads the TXT. Idempotent; test
@@ -119,7 +125,7 @@ one first.
 python3 scripts/pdf_to_text.py --collection KEY --limit 1   # ALWAYS test one
 python3 scripts/pdf_to_text.py --collection KEY             # batch
 ```
-Env: Zotero (a **write** key). Requires `pdftotext`.
+Env: `ZOTERO_API_KEY_RW` (falls back to `ZOTERO_API_KEY`) — needs write access. Requires `pdftotext`. DRY-RUN by default; pass `--commit` to upload.
 
 ### External data sources
 
