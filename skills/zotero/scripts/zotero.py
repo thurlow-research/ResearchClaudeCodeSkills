@@ -4,6 +4,9 @@ zotero.py — minimal CLI wrapper around the Zotero Web API v3.
 
 Auth & scope are read from (in order of precedence):
   1. Command-line flags: --api-key, --library-id, --library-type, --collection
+  1b. --library NAME resolves ZOTERO_<NAME>_LIBRARY_ID / _LIBRARY_TYPE, so
+      callers can say `--library SLR` instead of memorizing numeric ids.
+      Explicit --library-id / --library-type still take precedence.
   2. A .env file in the current working directory
   3. Environment variables: ZOTERO_API_KEY, ZOTERO_LIBRARY_ID,
      ZOTERO_LIBRARY_TYPE, ZOTERO_COLLECTION_KEY
@@ -74,15 +77,61 @@ def _load_dotenv() -> None:
         return
 
 
+def _named_libraries() -> dict[str, str]:
+    """Discover ZOTERO_<NAME>_LIBRARY_ID pairs in the environment.
+
+    Returns {NAME: id}. The bare ZOTERO_LIBRARY_ID is the unnamed default and is
+    excluded here — it has no name to be selected by.
+    """
+    found: dict[str, str] = {}
+    for key, val in os.environ.items():
+        if key == "ZOTERO_LIBRARY_ID" or not val:
+            continue
+        if key.startswith("ZOTERO_") and key.endswith("_LIBRARY_ID"):
+            name = key[len("ZOTERO_"):-len("_LIBRARY_ID")]
+            if name:
+                found[name] = val
+    return found
+
+
+def _resolve_named_library(name: str) -> tuple[str, str]:
+    """Map a friendly library name to (id, type).
+
+    `--library SLR` reads ZOTERO_SLR_LIBRARY_ID and, optionally,
+    ZOTERO_SLR_LIBRARY_TYPE.
+    """
+    slug = name.strip().upper().replace("-", "_")
+    lib_id = os.environ.get(f"ZOTERO_{slug}_LIBRARY_ID", "")
+    lib_type = os.environ.get(f"ZOTERO_{slug}_LIBRARY_TYPE", "")
+    if not lib_id:
+        known = sorted(_named_libraries())
+        hint = f" Configured: {', '.join(known)}." if known else ""
+        sys.exit(f"error: --library {name!r} needs ZOTERO_{slug}_LIBRARY_ID to be set.{hint}")
+    return lib_id, lib_type
+
+
 def resolve_config(args: argparse.Namespace) -> dict[str, str]:
     _load_dotenv()
+
+    named_id = named_type = ""
+    if getattr(args, "library", None):
+        named_id, named_type = _resolve_named_library(args.library)
+
+    # A named library carries its own type. Falling back to ZOTERO_LIBRARY_TYPE
+    # here would describe the *default* library rather than the one asked for —
+    # exactly the silent-wrong-library failure this flag exists to prevent.
+    if named_id:
+        library_type = args.library_type or named_type or "group"
+    else:
+        library_type = args.library_type or os.environ.get("ZOTERO_LIBRARY_TYPE", "user")
+
     cfg = {
         "api_key": (args.api_key or os.environ.get("ZOTERO_API_KEY_RO")
                     or os.environ.get("ZOTERO_API_KEY") or os.environ.get("ZOTERO_API_KEY_RW", "")),
         "write_key": (args.api_key or os.environ.get("ZOTERO_API_KEY_RW")
                       or os.environ.get("ZOTERO_API_KEY") or os.environ.get("ZOTERO_API_KEY_RO", "")),
-        "library_id": args.library_id or os.environ.get("ZOTERO_LIBRARY_ID", ""),
-        "library_type": (args.library_type or os.environ.get("ZOTERO_LIBRARY_TYPE", "user")).lower(),
+        "library_id": args.library_id or named_id or os.environ.get("ZOTERO_LIBRARY_ID", ""),
+        "library_type": library_type.lower(),
         "collection": args.collection or os.environ.get("ZOTERO_COLLECTION_KEY", ""),
     }
     if not cfg["api_key"]:
@@ -536,6 +585,34 @@ def cmd_cache(cfg, args):
         "library_version": _library_version(cfg) if files else None,
     }
     _print(info, "json")
+
+
+def cmd_libraries(cfg, args):
+    """List the named libraries configured in the environment.
+
+    Needs no API key and makes no network calls — it only reports what
+    ZOTERO_<NAME>_LIBRARY_ID variables are visible, so it works as a discovery
+    step before any other command.
+    """
+    _load_dotenv()
+    rows = []
+    for name in sorted(_named_libraries()):
+        rows.append((
+            name,
+            _named_libraries()[name],
+            os.environ.get(f"ZOTERO_{name}_LIBRARY_TYPE", "group"),
+        ))
+    default_id = os.environ.get("ZOTERO_LIBRARY_ID", "")
+    if default_id:
+        rows.append(("(default)", default_id, os.environ.get("ZOTERO_LIBRARY_TYPE", "user")))
+
+    if getattr(args, "format", "table") == "json":
+        _print([{"name": n, "id": i, "type": t} for n, i, t in rows], "json")
+        return
+    if not rows:
+        print("(no libraries configured — set ZOTERO_<NAME>_LIBRARY_ID)")
+        return
+    _tabulate(["name", "id", "type"], rows)
 
 
 def cmd_raw(cfg, args):
@@ -1334,6 +1411,127 @@ def _load_create_state(path: Path) -> dict:
         return {"created": []}
 
 
+# Fields Zotero keeps on every item regardless of type. Anything else is
+# type-specific and may be discarded when itemType changes.
+_TYPE_AGNOSTIC_FIELDS = {
+    "key", "version", "itemType", "title", "creators", "abstractNote", "date",
+    "language", "shortTitle", "url", "accessDate", "rights", "extra", "tags",
+    "collections", "relations", "dateAdded", "dateModified",
+}
+
+
+def _item_type_fields(cfg: dict[str, str], item_type: str) -> set[str]:
+    """Return the set of valid field names for an item type, per the API schema.
+
+    Cached like any other response; the schema changes rarely but we key it to
+    the library version along with everything else, which is harmless.
+    """
+    cached = _cache_get(cfg, "typefields", f"/itemTypeFields/{item_type}", None)
+    if cached is not None:
+        return set(cached)
+    url = f"{API_BASE}/itemTypeFields?itemType={urllib.parse.quote(item_type)}"
+    body, _ = _request(cfg, url)
+    fields = {f.get("field") for f in json.loads(body) if f.get("field")}
+    _cache_put(cfg, "typefields", f"/itemTypeFields/{item_type}", None, sorted(fields))
+    return fields
+
+
+def _update_one_item(cfg: dict[str, str], key: str, updates: dict,
+                     commit: bool, allow_field_loss: bool) -> dict:
+    """Apply a field-level update to one item, version-locked and idempotent."""
+    body, _ = _request(cfg, _url(cfg, f"/items/{key}", None))
+    item = json.loads(body)
+    data = item.get("data", {})
+    version = item.get("version") or data.get("version")
+
+    result = {
+        "key": key,
+        "title": (data.get("title") or "")[:60],
+        "changes": {},
+        "dropped_fields": [],
+    }
+
+    # Skip no-op fields so a re-run costs nothing.
+    changes = {f: v for f, v in updates.items() if data.get(f) != v}
+    if not changes:
+        result["status"] = "skip-already-current"
+        return result
+    result["changes"] = {f: {"from": data.get(f, ""), "to": v} for f, v in changes.items()}
+
+    # An itemType change discards fields the new type does not define. Surface
+    # the ones carrying data before anything is written.
+    new_type = changes.get("itemType")
+    if new_type:
+        try:
+            valid = _item_type_fields(cfg, new_type)
+        except SystemExit:
+            result["status"] = f"error-unknown-itemtype-{new_type}"
+            return result
+        for field, value in data.items():
+            if field in _TYPE_AGNOSTIC_FIELDS or field in valid or field in changes:
+                continue
+            if value not in ("", [], {}, None):
+                result["dropped_fields"].append(field)
+        if result["dropped_fields"] and not allow_field_loss:
+            result["status"] = "blocked-would-lose-fields"
+            return result
+
+    if not commit:
+        result["status"] = "would-update"
+        return result
+
+    status, rbody, _ = _write_request(
+        cfg, _url(cfg, f"/items/{key}", None), "PATCH",
+        json.dumps(changes).encode("utf-8"), version=version,
+    )
+    if status in (200, 204):
+        result["status"] = "updated"
+    elif status == 412:
+        result["status"] = "conflict-version-changed"
+    else:
+        result["status"] = f"error-http-{status}"
+        result["detail"] = rbody.decode("utf-8", "replace")[:200]
+    return result
+
+
+def cmd_update_items(cfg, args):
+    """Update fields on existing items from a plan file. DRY-RUN unless --commit.
+
+    Plan file format (JSON): {"ITEMKEY": {"field": "value", ...}, ...}
+    """
+    plan = json.loads(Path(args.plan).read_text())
+    if not isinstance(plan, dict):
+        sys.exit('error: plan must be a JSON object: {"ITEMKEY": {"field": "value"}}')
+
+    commit = args.commit
+    results = [
+        _update_one_item(cfg, key, updates, commit, args.allow_field_loss)
+        for key, updates in plan.items()
+    ]
+    if commit and any(r["status"] == "updated" for r in results):
+        _invalidate_cache(cfg)
+
+    summary: dict[str, int] = {}
+    for r in results:
+        summary[r["status"]] = summary.get(r["status"], 0) + 1
+
+    blocked = [r for r in results if r["status"] == "blocked-would-lose-fields"]
+    out = {
+        "mode": "COMMIT" if commit else "DRY-RUN (no changes written; pass --commit to apply)",
+        "items": len(results),
+        "fields_to_write": sum(len(r["changes"]) for r in results
+                               if r["status"] in ("would-update", "updated")),
+        "summary": summary,
+        "results": results,
+    }
+    if blocked:
+        out["note"] = (
+            "Some item-type changes would discard non-empty fields. Review "
+            "'dropped_fields' and re-run with --allow-field-loss to proceed."
+        )
+    _print(out, args.format)
+
+
 def cmd_create_items(cfg, args):
     """Create new items from a plan file. DRY-RUN by default; pass --commit to write.
 
@@ -1410,6 +1608,11 @@ def cmd_create_items(cfg, args):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Query a Zotero library via the Web API.")
     p.add_argument("--api-key", help="Overrides ZOTERO_API_KEY.")
+    p.add_argument("--library", metavar="NAME",
+                   help="Select a named library, e.g. SLR or COURSE. Reads "
+                        "ZOTERO_<NAME>_LIBRARY_ID (and optional _LIBRARY_TYPE, "
+                        "default 'group'). Run the `libraries` subcommand to list "
+                        "what is configured. --library-id/--library-type still win.")
     p.add_argument("--library-id", help="Overrides ZOTERO_LIBRARY_ID.")
     p.add_argument("--library-type", choices=["user", "group"], help="Overrides ZOTERO_LIBRARY_TYPE.")
     p.add_argument("--collection", help="Overrides ZOTERO_COLLECTION_KEY (8-char key).")
@@ -1475,6 +1678,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("cache", help="Inspect or clear the local response cache.")
     sp.add_argument("--clear", action="store_true", help="Delete all cached entries for this library.")
     sp.set_defaults(func=cmd_cache)
+
+    sp = sub.add_parser("libraries", help="List named libraries configured in the environment.")
+    sp.add_argument("--format", choices=["json", "table"], default="table")
+    sp.set_defaults(func=cmd_libraries)
 
     sp = sub.add_parser("raw", help="Make an arbitrary GET against /users/{id} or /groups/{id}.")
     sp.add_argument("path", help="Path under the library root, e.g. /items/top")
@@ -1558,6 +1765,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_collection_remove)
 
     sp = sub.add_parser(
+        "update-items",
+        help="Update fields on existing items from a plan file (DRY-RUN unless --commit). "
+             "Write-scoped key. Guards item-type changes that would discard data.",
+    )
+    sp.add_argument("--plan", required=True,
+                    help='JSON: {"itemKey": {"field": "value", ...}, ...}')
+    sp.add_argument("--commit", action="store_true", help="Actually write the changes (otherwise dry-run).")
+    sp.add_argument("--allow-field-loss", action="store_true",
+                    help="Permit an itemType change that discards non-empty fields.")
+    sp.add_argument("--format", choices=["json", "table"], default="json")
+    sp.set_defaults(func=cmd_update_items)
+
+    sp = sub.add_parser(
         "create-items",
         help="Create new items from a plan file (DRY-RUN unless --commit). Write-scoped key. "
              "For query-only import skills (e.g. arxiv) to hand off writes to.",
@@ -1575,6 +1795,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    # `libraries` is a discovery command: it must work before credentials or a
+    # library id are configured, so it bypasses resolve_config's validation.
+    if args.cmd == "libraries":
+        cmd_libraries(None, args)
+        return
     cfg = resolve_config(args)
     args.func(cfg, args)
 
