@@ -10,5 +10,13 @@ __pycache__/
 # caches created at runtime
 .cache/
 
-# build artifact — published via GitHub Releases, not committed
+# build artifacts — published via GitHub Releases, not committed
 releases/*.zip
+releases/*.mcpb
+
+# editor/tool debris
+*.bak-*
+
+# paper full texts must never land in a public repo
+skills/**/*.txt
+!skills/**/references/*.txt
