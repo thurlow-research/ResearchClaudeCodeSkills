@@ -1,0 +1,31 @@
+# Zotero library registry — TEMPLATE. All ids/keys below are placeholders.
+#
+# The real file lives OUTSIDE the repo (it is per-user config, never committed):
+#   $ZOTERO_LIBRARIES_FILE if set, else ~/.config/claude-zotero/libraries.yml
+#
+# Don't fill this in by hand — generate the real file from your Zotero account:
+#   python3 skills/zotero/scripts/zotero.py libraries --sync
+# (it discovers libraries from ZOTERO_USER_ID / ZOTERO_<NAME>_LIBRARY_ID env vars
+# or an existing registry, then fetches every collection tree from the API).
+#
+# Library names become `--library NAME`; collection names become `--collection NAME`
+# (full path, or a unique leaf like "Keep"). API keys are account-wide, so this file
+# carries no secrets — only numeric ids and collection keys.
+#
+# Env vars layer on top and win on conflict:
+#   ZOTERO_USER_ID                            -> the "user" (personal) library
+#   ZOTERO_<NAME>_LIBRARY_ID / _LIBRARY_TYPE  -> add/override library NAME
+
+libraries:
+  user:                       # the personal library: --library user
+    id: 1234567               # your numeric userID (zotero.org/settings/keys)
+    type: user
+    collections:
+      Reading List: AAAA1111
+  SLR:                        # a group library: --library SLR
+    id: 7654321               # the number in zotero.org/groups/NNNNNNN
+    type: group
+    collections:
+      02-Screening / 00-Queue: BBBB2222
+      02-Screening / 01-Keep: CCCC3333
+      02-Screening / 02-Maybe: DDDD4444

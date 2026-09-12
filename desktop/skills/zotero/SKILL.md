@@ -30,7 +30,7 @@ Libraries (at least one of):
         02-Screening / Keep: ABCD1234
   ```
 
-  Generate/refresh it with `zotero.py libraries --sync` — it fetches every registered library's collection tree from the API. With the registry in place, `--collection` accepts a collection *name* (full path, or a unique leaf like `Keep`) instead of an 8-char key.
+  Generate/refresh it with `zotero.py libraries --sync` — it fetches every registered library's collection tree from the API. With the registry in place, `--collection` accepts a collection *name* (full path, or a unique leaf like `Keep`) instead of an 8-char key. A placeholder template is at `references/libraries.template.yml`; the real file lives outside the repo at the path above and is never committed.
 - `ZOTERO_<NAME>_LIBRARY_ID` (+ optional `ZOTERO_<NAME>_LIBRARY_TYPE`, default `group`) — env-var alternative for naming a library, e.g. `ZOTERO_SLR_LIBRARY_ID`. Env vars win over the YAML on conflict.
 
 Optional:
