@@ -12,12 +12,30 @@ Interact with a Zotero library (personal or group) through the Zotero Web API. T
 The user must fill in two values before this skill works. They live in environment variables so no secrets get committed to the skill itself.
 
 Required:
-- `ZOTERO_API_KEY` — generated at https://www.zotero.org/settings/security (scroll to "Applications"). For read-only use, grant library read access; no write permission is needed unless the user explicitly wants to create/update items.
-- `ZOTERO_LIBRARY_ID` — numeric user ID (found at https://www.zotero.org/settings/security under "Your userID for use in API calls") for personal libraries, or the numeric group ID for group libraries.
+- `ZOTERO_API_KEY` — generated at https://www.zotero.org/settings/security (scroll to "Applications"). Create it **account-wide** (personal library + "all groups" with library read access): one key pair then covers every library, and no per-library or per-collection keys are needed. No write permission is needed unless the user explicitly wants to create/update items.
+
+Libraries (at least one of):
+- `ZOTERO_USER_ID` — numeric userID (found at https://www.zotero.org/settings/security under "Your userID for use in API calls"). Registers the personal library, addressable as `--library user`.
+- The **library registry** — a YAML file at `$ZOTERO_LIBRARIES_FILE` (default `~/.config/claude-zotero/libraries.yml`) enumerating libraries *and their collections* by name:
+
+  ```yaml
+  libraries:
+    user:
+      id: 1234567
+      type: user
+    SLR:
+      id: 6505702
+      type: group
+      collections:
+        02-Screening / Keep: ABCD1234
+  ```
+
+  Generate/refresh it with `zotero.py libraries --sync` — it fetches every registered library's collection tree from the API. With the registry in place, `--collection` accepts a collection *name* (full path, or a unique leaf like `Keep`) instead of an 8-char key.
+- `ZOTERO_<NAME>_LIBRARY_ID` (+ optional `ZOTERO_<NAME>_LIBRARY_TYPE`, default `group`) — env-var alternative for naming a library, e.g. `ZOTERO_SLR_LIBRARY_ID`. Env vars win over the YAML on conflict.
 
 Optional:
-- `ZOTERO_LIBRARY_TYPE` — `user` (default) or `group`.
-- `ZOTERO_COLLECTION_KEY` — the 8-character collection key if the user wants all operations scoped to a single collection by default. Found in the Zotero desktop app by right-clicking a collection → "Edit Bibliography" URL, or via `zotero.py collections`.
+- `ZOTERO_LIBRARY_ID` / `ZOTERO_LIBRARY_TYPE` — an explicit unnamed default library. Without it, the default falls back to the personal library via `ZOTERO_USER_ID`.
+- `ZOTERO_COLLECTION_KEY` — a default collection (key or registry name) to scope all operations to.
 
 ## Credentials in this environment (Claude Desktop / claude.ai)
 
@@ -27,18 +45,18 @@ lines in the **project instructions** (or the user's global preferences), using 
 variable names the CLI already reads:
 
 ```
-ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # reads
+ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # reads (account-wide: personal library + all groups)
 ZOTERO_API_KEY_RW=xxxxxxxxxxxxxxxxxxxxxxxx   # writes (e.g. tag-add --commit); omit if you only read
-ZOTERO_LIBRARY_ID=1234567
-ZOTERO_LIBRARY_TYPE=group
+ZOTERO_USER_ID=1234567                       # personal library (--library user)
+ZOTERO_SLR_LIBRARY_ID=6505702                # named group libraries (--library SLR); repeat per group
 ```
 
 Read the values from the instructions and pass them **inline as environment variables on
 every script invocation**:
 
 ```
-ZOTERO_API_KEY_RO=... ZOTERO_LIBRARY_ID=... ZOTERO_LIBRARY_TYPE=group \
-  python3 scripts/zotero.py collections
+ZOTERO_API_KEY_RO=... ZOTERO_USER_ID=... ZOTERO_SLR_LIBRARY_ID=... \
+  python3 scripts/zotero.py --library SLR collections
 ```
 
 Rules:
@@ -53,7 +71,7 @@ All operations go through `scripts/zotero.py`. **Invoke it with `python3`**, pas
 | Command | What it does |
 |---|---|
 | `collections` | List all collections in the library with their keys and names. Use this first if the user hasn't identified a specific collection. |
-| `items` | List items. Accepts `--collection KEY`, `--tag TAG`, `--limit N`, `--fields`, `--format json\|table\|bib`. Defaults to the collection in `ZOTERO_COLLECTION_KEY` if set. |
+| `items` | List items. Accepts `--collection NAME_OR_KEY`, `--tag TAG`, `--limit N`, `--fields`, `--format json\|table\|bib`. Defaults to the collection in `ZOTERO_COLLECTION_KEY` if set. |
 | `count` | Print **only** the number of matching items (read from the `Total-Results` header — one request, no item bodies). Accepts `--collection`, `--tag`, `--q`, `--top`/`--all`. Use this for any "how many" question instead of listing and counting. |
 | `item KEY` | Fetch a single item by its 8-character item key, including metadata and any child attachments/notes. |
 | `search QUERY` | Full-text/quick search across the library (or scoped collection). Accepts `--fields`. |
@@ -61,6 +79,7 @@ All operations go through `scripts/zotero.py`. **Invoke it with `python3`**, pas
 | `export` | Export items as BibTeX, RIS, or CSL-JSON. Accepts the same filters as `items`. |
 | `attachment KEY` | Download an attachment (usually a PDF) to a local path and, if it's a PDF, extract text. |
 | `cache` | Inspect the local cache (entry count, size, library version); `--clear` empties it. |
+| `libraries` | List the registered libraries (YAML registry + env vars) with their collection counts — the discovery step before `--library`. `--sync` fetches every library's collection tree from the API and rewrites the registry file so collections resolve by name. |
 | `tag-add` | Add tags to items. **DRY-RUN by default** — prints what it would do; pass `--commit` to write. Use `KEY --add tag` for one item or `--plan FILE.json` (`{"KEY": ["tag", …]}`) for bulk. Idempotent (skips tags already present), version-locked, and invalidates the cache after writing. Requires a write-scoped API key. |
 | `create-items` | Create new items from a plan file. **DRY-RUN by default**; pass `--commit` to write. Plan format: `[{"dedupe_key": "<source>:<id>", "item": {...Zotero item data...}}, ...]` — `dedupe_key` is caller-defined and used only for resume/idempotency (never sent to Zotero). Progress persists to `--state` (default `<plan>.state.json`), so a re-run after an interruption skips whatever already succeeded. This is the shared write path query-only import skills (e.g. `arxiv`) hand a plan off to, instead of each reimplementing Zotero write auth/batching/retries. Batches at 50 items (Zotero's write cap) and invalidates the cache after committing. Requires a write-scoped API key. |
 | `prisma` | Report PRISMA-style counts across data sources. Recognizes both the `01-Import(s)/02-Screening` and legacy `Imports/Classification` layouts, the `04-Superseded` stage, and phase containers. Use `--root NAME` to scope to one phase (see below). |
@@ -91,7 +110,7 @@ Responses are cached on disk (default `~/.cache/claude-zotero/<libtype>-<libid>/
 
 When the user asks something Zotero-shaped:
 
-1. **Check scope.** If the user names a collection ("the AI governance collection"), first run `collections` to resolve the name to a key, unless `ZOTERO_COLLECTION_KEY` is set and the user means that one. If the scope is ambiguous, ask before hitting the API — library-wide queries can be slow on big libraries.
+1. **Check scope.** If the user names a collection ("the AI governance collection"), try it directly as `--collection NAME` — the registry resolves names (full paths and unique leaves) without an API call, and its error message lists the known names. Fall back to `collections` only when the registry has no match (then suggest `libraries --sync` to refresh it). If the scope is ambiguous, ask before hitting the API — library-wide queries can be slow on big libraries.
 2. **Apply the discard-collection exclusion** (see section below) for any analytical query — counting, summarizing, exporting, reasoning about content. Skip it only when the user is explicitly asking about discarded/rejected items.
 3. **Pick the narrowest command.** `search` beats `items` when the user has a query term. `item KEY` beats re-listing when you already know the key from a previous turn.
 4. **Page through large results deliberately.** The Zotero API caps responses at 100 items per request; `items` and `search` handle pagination automatically, but warn the user before pulling thousands of records.

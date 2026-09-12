@@ -22,10 +22,10 @@ lines in the **project instructions** (or the user's global preferences), using 
 variable names the CLI already reads:
 
 ```
-ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # reads
+ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # reads (account-wide: personal library + all groups)
 ZOTERO_API_KEY_RW=xxxxxxxxxxxxxxxxxxxxxxxx   # writes (e.g. tag-add --commit); omit if you only read
-ZOTERO_LIBRARY_ID=1234567
-ZOTERO_LIBRARY_TYPE=group
+ZOTERO_USER_ID=1234567                       # personal library (--library user)
+ZOTERO_SLR_LIBRARY_ID=6505702                # named group libraries (--library SLR); repeat per group
 ```
 
 Read the values from the instructions and pass them **inline as environment variables on

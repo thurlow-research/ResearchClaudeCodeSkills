@@ -29,6 +29,8 @@
         "ZOTERO_API_KEY_RW": "${user_config.zotero_api_key_rw}",
         "ZOTERO_LIBRARY_ID": "${user_config.zotero_library_id}",
         "ZOTERO_LIBRARY_TYPE": "${user_config.zotero_library_type}",
+        "ZOTERO_USER_ID": "${user_config.zotero_user_id}",
+        "ZOTERO_LIBRARIES_FILE": "${user_config.zotero_libraries_file}",
         "OPENALEX_API_KEY": "${user_config.openalex_api_key}",
         "OPENALEX_MAILTO": "${user_config.openalex_mailto}",
         "SEMANTIC_SCHOLAR_API_KEY": "${user_config.semantic_scholar_api_key}",
@@ -51,16 +53,28 @@
   "user_config": {
     "zotero_library_id": {
       "type": "string",
-      "title": "Zotero library ID",
-      "description": "Numeric ID of the group or user library, e.g. 6505702. Not a secret.",
-      "required": true
+      "title": "Zotero default library ID",
+      "description": "Optional. Numeric ID of the default group or user library, e.g. 6505702. Leave blank if you use the library registry (libraries.yml) or the personal-library user ID below. Not a secret.",
+      "required": false
     },
     "zotero_library_type": {
       "type": "string",
-      "title": "Zotero library type",
-      "description": "\"group\" or \"user\".",
+      "title": "Zotero default library type",
+      "description": "\"group\" or \"user\" — only meaningful with a default library ID.",
       "default": "group",
-      "required": true
+      "required": false
+    },
+    "zotero_user_id": {
+      "type": "string",
+      "title": "Zotero user ID (personal library)",
+      "description": "Optional. Your numeric userID from zotero.org/settings/keys; registers the personal library as --library user. Not a secret.",
+      "required": false
+    },
+    "zotero_libraries_file": {
+      "type": "string",
+      "title": "Zotero library registry file",
+      "description": "Optional. Path to a libraries.yml enumerating libraries and their collections by name (default ~/.config/claude-zotero/libraries.yml). Generate it with `zotero.py libraries --sync`. Not a secret.",
+      "required": false
     },
     "zotero_api_key_ro": {
       "type": "string",
