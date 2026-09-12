@@ -70,8 +70,21 @@ export ZOTERO_API_KEY_RW=...         # write-scoped key — used only for writes
                                       # zotero.org/settings/keys, one without write access
 # ...or set a single ZOTERO_API_KEY (legacy) if you don't want to split keys — every skill
 # falls back to it when the RO/RW-specific variable isn't set.
+# Create the keys ACCOUNT-WIDE (personal library + "all groups"): the same pair then
+# authenticates against every library, so no per-library keys are needed.
+export ZOTERO_USER_ID=...            # your numeric userID → personal library (--library user)
+export ZOTERO_SLR_LIBRARY_ID=...     # named group libraries: ZOTERO_<NAME>_LIBRARY_ID (repeatable;
+                                     # optional ZOTERO_<NAME>_LIBRARY_TYPE, default 'group')
+# Optional unnamed default (otherwise the personal library is the default):
 export ZOTERO_LIBRARY_ID=...         # numeric group id, or your user id
 export ZOTERO_LIBRARY_TYPE=group     # 'group' or 'user'
+
+# Libraries + their collections can also be enumerated by name in a YAML registry at
+# $ZOTERO_LIBRARIES_FILE (default ~/.config/claude-zotero/libraries.yml). Generate it with
+#   python3 skills/zotero/scripts/zotero.py libraries --sync
+# — it fetches every registered library's collection tree so that --collection accepts
+# collection names (e.g. --collection "02-Screening / Keep" or a unique leaf like "Keep")
+# instead of 8-character keys.
 
 # --- data sources ---
 export OPENALEX_API_KEY=...          # STRONGLY ADVISED — see note below
@@ -88,7 +101,7 @@ export EXA_API_KEY=...               # for the exa plugin
 ### Where to get each key
 | Key | Where | Notes |
 |---|---|---|
-| `ZOTERO_API_KEY_RO` / `_RW` / `LIBRARY_ID` | zotero.org/settings/keys → *Create new private key* | Create two keys scoped to the same **group**: one read-only (`ZOTERO_API_KEY_RO`), one with **write** checked (`ZOTERO_API_KEY_RW`). A single `ZOTERO_API_KEY` also still works. Library id = the number in `groups/NNNNNN`, or your userID on the same page. |
+| `ZOTERO_API_KEY_RO` / `_RW` / `ZOTERO_USER_ID` / `*_LIBRARY_ID` | zotero.org/settings/keys → *Create new private key* | Create two **account-wide** keys (personal library + "all groups"): one read-only (`ZOTERO_API_KEY_RO`), one with **write** checked (`ZOTERO_API_KEY_RW`). A single `ZOTERO_API_KEY` also still works. Group id = the number in `groups/NNNNNN`; your userID is shown on the same page. |
 | `OPENALEX_API_KEY` | openalex.org/settings/api | **Strongly advised** (see box above). Free, 30-sec signup. |
 | `SEMANTIC_SCHOLAR_API_KEY` | semanticscholar.org/product/api | Free; optional. Raises rate limits. |
 | `EXA_API_KEY` | exa.ai → dashboard | For the plugin's API-key auth path. |

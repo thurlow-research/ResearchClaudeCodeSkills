@@ -4,9 +4,19 @@ zotero.py — minimal CLI wrapper around the Zotero Web API v3.
 
 Auth & scope are read from (in order of precedence):
   1. Command-line flags: --api-key, --library-id, --library-type, --collection
+  1b. --library NAME selects a library from the registry (YAML file at
+      $ZOTERO_LIBRARIES_FILE, default ~/.config/claude-zotero/libraries.yml,
+      plus ZOTERO_<NAME>_LIBRARY_ID env vars and ZOTERO_USER_ID for the
+      personal library). Explicit --library-id / --library-type still win.
+  1c. --collection accepts either a collection *name* from the registry or a
+      raw 8-character key. `libraries --sync` builds the registry from the API.
   2. A .env file in the current working directory
   3. Environment variables: ZOTERO_API_KEY, ZOTERO_LIBRARY_ID,
-     ZOTERO_LIBRARY_TYPE, ZOTERO_COLLECTION_KEY
+     ZOTERO_LIBRARY_TYPE, ZOTERO_USER_ID, ZOTERO_COLLECTION_KEY
+
+API keys are account-wide (one RO/RW pair covers the personal library and
+every group the key was granted), so there are no per-library or
+per-collection key variables.
 
 Stdlib only. If you'd rather use the excellent `pyzotero` package, it's a
 drop-in upgrade — but we avoid a dependency so the skill works out of the box.
@@ -18,6 +28,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 import urllib.parse
@@ -74,23 +85,276 @@ def _load_dotenv() -> None:
         return
 
 
+# ---------------------------------------------------------------------------
+# Library registry (YAML file + environment)
+# ---------------------------------------------------------------------------
+#
+# Libraries and their collections are enumerated in one YAML registry so both
+# can be addressed by name. API keys are account-wide (one RO/RW pair covers
+# the personal library and every group), so the registry holds no secrets —
+# only numeric ids and collection keys:
+#
+#   libraries:
+#     user:                    # the personal library
+#       id: 1234567
+#       type: user
+#     SLR:
+#       id: 6505702
+#       type: group
+#       collections:
+#         02-Screening / Keep: ABCD1234
+#
+# Location: $ZOTERO_LIBRARIES_FILE, else ~/.config/claude-zotero/libraries.yml.
+# Environment variables layer on top and win on conflict (same convention as
+# .env: shell exports override file values):
+#   ZOTERO_<NAME>_LIBRARY_ID / _LIBRARY_TYPE   -> add/override library NAME
+#   ZOTERO_USER_ID                             -> add/override the "user" library
+#
+# `libraries --sync` generates the file by fetching every registered library's
+# collection tree from the API.
+
+DEFAULT_LIBRARIES_FILE = Path.home() / ".config" / "claude-zotero" / "libraries.yml"
+_ZOTERO_KEY_RE = re.compile(r"^[A-Z0-9]{8}$")
+_REGISTRY_MEMO: dict[str, dict] | None = None
+
+
+def _libraries_file() -> Path:
+    override = os.environ.get("ZOTERO_LIBRARIES_FILE")
+    return Path(override).expanduser() if override else DEFAULT_LIBRARIES_FILE
+
+
+def _parse_yaml_min(text: str) -> dict:
+    """Parse the small YAML subset the registry uses: nested maps of scalars.
+
+    Indentation-based nesting, `key: value` scalars, comments, and (optionally
+    quoted) keys — no lists, anchors, or multi-line values, which the registry
+    never needs. Defers to PyYAML when it happens to be installed.
+    """
+    try:
+        import yaml  # type: ignore
+        return yaml.safe_load(text) or {}
+    except ImportError:
+        pass
+
+    root: dict = {}
+    stack: list[tuple[int, dict]] = [(-1, root)]  # (indent, container)
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        line = raw.rstrip()
+        indent = len(line) - len(line.lstrip(" "))
+        s = line.strip()
+        if s[0] in "'\"":
+            # Comments are stripped only after the closing quote — a ' #'
+            # inside the quotes is part of the key, exactly as in real YAML.
+            end = s.find(s[0], 1)
+            rest = s[end + 1:].lstrip() if end > 0 else ""
+            if end < 1 or not rest.startswith(":"):
+                raise ValueError(f"line {lineno}: malformed quoted key: {raw.strip()!r}")
+            key = s[1:end]
+            value = re.sub(r"\s+#.*$", "", rest[1:]).strip().strip("'\"")
+        else:
+            # In a plain (unquoted) scalar, ' #' starts a comment per YAML.
+            s = re.sub(r"\s+#.*$", "", s)
+            if not s:
+                continue
+            key, sep, value = s.partition(":")
+            if not sep:
+                raise ValueError(f"line {lineno}: expected 'key: value' or 'key:', got {raw.strip()!r}")
+            key, value = key.strip(), value.strip().strip("'\"")
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+        if value == "":
+            child: dict = {}
+            parent[key] = child
+            stack.append((indent, child))
+        else:
+            parent[key] = value
+    return root
+
+
+def _registry_lookup(registry: dict[str, dict], name: str) -> str | None:
+    """Case- and -/_-insensitive library name lookup; returns the canonical name."""
+    want = name.strip().lower().replace("-", "_")
+    for known in registry:
+        if known.strip().lower().replace("-", "_") == want:
+            return known
+    return None
+
+
+def _load_registry() -> dict[str, dict]:
+    """Merged library registry: YAML file first, env vars layered on top.
+
+    Returns {NAME: {"id", "type", "collections": {name: key}, "source"}}. Env
+    vars win on id/type, but the YAML's collections map is kept either way —
+    an env var can't carry one.
+    """
+    global _REGISTRY_MEMO
+    if _REGISTRY_MEMO is not None:
+        return _REGISTRY_MEMO
+
+    registry: dict[str, dict] = {}
+    path = _libraries_file()
+    if path.is_file():
+        try:
+            doc = _parse_yaml_min(path.read_text())
+        except ValueError as exc:
+            sys.exit(f"error: could not parse {path}: {exc}")
+        entries = doc.get("libraries", doc) if isinstance(doc, dict) else {}
+        for name, spec in (entries or {}).items():
+            if not isinstance(spec, dict) or not str(spec.get("id", "")).strip():
+                continue
+            name = str(name).strip()
+            lib_type = str(spec.get("type", "")).strip().lower()
+            if not lib_type:
+                lib_type = "user" if name.lower() == "user" else "group"
+            cols = spec.get("collections") or {}
+            registry[name] = {
+                "id": str(spec["id"]).strip(),
+                "type": lib_type,
+                "collections": {str(k): str(v) for k, v in cols.items() if not isinstance(v, dict)},
+                "source": str(path),
+            }
+
+    for key, val in os.environ.items():
+        if key == "ZOTERO_LIBRARY_ID" or not val:
+            continue
+        if key.startswith("ZOTERO_") and key.endswith("_LIBRARY_ID"):
+            name = key[len("ZOTERO_"):-len("_LIBRARY_ID")]
+            if not name:
+                continue
+            canonical = _registry_lookup(registry, name) or name
+            entry = registry.setdefault(canonical, {"collections": {}, "source": "env"})
+            if entry.get("id") and entry["id"] != val:
+                # The YAML's collections map described a different library —
+                # keeping it would resolve names to another library's keys.
+                entry["collections"] = {}
+            entry["id"] = val
+            entry["type"] = (os.environ.get(f"ZOTERO_{name}_LIBRARY_TYPE")
+                             or entry.get("type") or "group").lower()
+
+    user_id = os.environ.get("ZOTERO_USER_ID", "")
+    if user_id:
+        canonical = _registry_lookup(registry, "user") or "user"
+        entry = registry.setdefault(canonical, {"collections": {}, "source": "env"})
+        if entry.get("id") and entry["id"] != user_id:
+            entry["collections"] = {}
+        entry["id"] = user_id
+        entry["type"] = "user"
+
+    _REGISTRY_MEMO = registry
+    return registry
+
+
+def _resolve_named_library(name: str) -> dict:
+    """Map a friendly library name to its registry entry (id, type, collections)."""
+    registry = _load_registry()
+    canonical = _registry_lookup(registry, name)
+    if canonical is None:
+        known = ", ".join(sorted(registry)) or "(none)"
+        sys.exit(
+            f"error: unknown library {name!r}. Configured: {known}. "
+            f"Add it to {_libraries_file()}, or set "
+            f"ZOTERO_{name.strip().upper().replace('-', '_')}_LIBRARY_ID "
+            "(ZOTERO_USER_ID for the personal library)."
+        )
+    return {"name": canonical, **registry[canonical]}
+
+
+def _resolve_collection(cfg: dict, value: str) -> str:
+    """Resolve --collection: a registry name (full path or unique leaf) or a raw key.
+
+    Registry names win over key-shaped strings — an exact name match is always
+    intentional. Anything not in the registry must look like an 8-char key.
+    """
+    if not value:
+        return ""
+    collections: dict[str, str] = cfg.get("collections") or {}
+    want = value.strip().lower()
+    for name, key in collections.items():
+        if name.strip().lower() == want:
+            return key
+    # A key-shaped value is a key. Checked before the leaf match so a
+    # collection whose leaf name happens to look like a key can't hijack a
+    # caller who really meant the key.
+    if _ZOTERO_KEY_RE.match(value.strip().upper()):
+        return value.strip().upper()
+    # Leaf match: let "Keep" find "02-Screening / Keep" when unambiguous.
+    leaf_hits = [(n, k) for n, k in collections.items()
+                 if n.split("/")[-1].strip().lower() == want]
+    if len(leaf_hits) == 1:
+        return leaf_hits[0][1]
+    if len(leaf_hits) > 1:
+        opts = "; ".join(n for n, _ in leaf_hits)
+        sys.exit(f"error: collection name {value!r} is ambiguous — matches: {opts}. Use the full path name.")
+    known = "; ".join(sorted(collections)) or "(none registered — run `libraries --sync`)"
+    sys.exit(f"error: {value!r} is neither a registered collection name nor an 8-char key. Known: {known}")
+
+
 def resolve_config(args: argparse.Namespace) -> dict[str, str]:
     _load_dotenv()
+
+    named: dict = {}
+    if getattr(args, "library", None):
+        named = _resolve_named_library(args.library)
+
+    # A named library carries its own type. Falling back to ZOTERO_LIBRARY_TYPE
+    # here would describe the *default* library rather than the one asked for —
+    # exactly the silent-wrong-library failure this flag exists to prevent.
+    if named:
+        library_type = args.library_type or named.get("type") or "group"
+    else:
+        library_type = args.library_type or os.environ.get("ZOTERO_LIBRARY_TYPE", "user")
+
+    # Default library when neither --library nor --library-id is given:
+    # ZOTERO_LIBRARY_ID, else the personal library via ZOTERO_USER_ID.
+    default_id = os.environ.get("ZOTERO_LIBRARY_ID", "")
+    if not default_id and not named and not args.library_id:
+        default_id = os.environ.get("ZOTERO_USER_ID", "")
+        if default_id and not args.library_type:
+            library_type = "user"
+
     cfg = {
+        # Keys are account-wide: the same RO/RW pair authenticates against
+        # every library the key was granted, so none of this is per-library.
         "api_key": (args.api_key or os.environ.get("ZOTERO_API_KEY_RO")
                     or os.environ.get("ZOTERO_API_KEY") or os.environ.get("ZOTERO_API_KEY_RW", "")),
         "write_key": (args.api_key or os.environ.get("ZOTERO_API_KEY_RW")
                       or os.environ.get("ZOTERO_API_KEY") or os.environ.get("ZOTERO_API_KEY_RO", "")),
-        "library_id": args.library_id or os.environ.get("ZOTERO_LIBRARY_ID", ""),
-        "library_type": (args.library_type or os.environ.get("ZOTERO_LIBRARY_TYPE", "user")).lower(),
-        "collection": args.collection or os.environ.get("ZOTERO_COLLECTION_KEY", ""),
+        "library_id": args.library_id or named.get("id", "") or default_id,
+        "library_type": library_type.lower(),
+        # An explicit --library-id pointing away from the named library makes
+        # its collections map describe the wrong library — drop it.
+        "collections": (named.get("collections", {})
+                        if not args.library_id or args.library_id == named.get("id")
+                        else {}),
     }
     if not cfg["api_key"]:
         sys.exit("error: missing Zotero API key (set ZOTERO_API_KEY_RO/_RW or ZOTERO_API_KEY, or pass --api-key)")
     if not cfg["library_id"]:
-        sys.exit("error: missing ZOTERO_LIBRARY_ID (set env var or pass --library-id)")
+        sys.exit("error: no library selected (pass --library NAME / --library-id, or set "
+                 "ZOTERO_LIBRARY_ID or ZOTERO_USER_ID)")
+    if not cfg["library_id"].isdigit():
+        # Zotero ids are always numeric; this also keeps a hostile value out
+        # of the cache-directory path built from it.
+        sys.exit(f"error: library id must be numeric, got {cfg['library_id']!r}")
     if cfg["library_type"] not in ("user", "group"):
         sys.exit(f"error: ZOTERO_LIBRARY_TYPE must be 'user' or 'group', got {cfg['library_type']!r}")
+
+    # When the library was picked implicitly (default id), still surface its
+    # registry collections so names resolve without --library.
+    if not cfg["collections"]:
+        for entry in _load_registry().values():
+            if entry.get("id") == cfg["library_id"] and entry.get("type", "group") == cfg["library_type"]:
+                cfg["collections"] = entry.get("collections", {})
+                break
+
+    cfg["collection"] = _resolve_collection(
+        cfg, args.collection or os.environ.get("ZOTERO_COLLECTION_KEY", ""))
+    # Subcommands read args.collection directly; hand them the resolved key so
+    # registry names (and the ZOTERO_COLLECTION_KEY default) actually apply.
+    args.collection = cfg["collection"]
 
     # Cache mode: 'on' (read+write), 'refresh' (ignore reads, rewrite), 'off'.
     if getattr(args, "no_cache", False):
@@ -536,6 +800,101 @@ def cmd_cache(cfg, args):
         "library_version": _library_version(cfg) if files else None,
     }
     _print(info, "json")
+
+
+def _yaml_quote(s: str) -> str:
+    """Quote a registry key/name when YAML would otherwise misparse it.
+
+    The mini-parser has no escape support, so embedded double quotes are
+    normalized to single quotes rather than escaped, and newlines (which would
+    split the line-oriented parse) collapse to single spaces along with any
+    other whitespace runs.
+    """
+    s = " ".join(s.replace('"', "'").split())
+    if s == "" or re.search(r"[:#]|^[\s&*?|>%@`!,\[\]{}'\-]|\s$|^\s", s):
+        return f'"{s}"'
+    return s
+
+
+def _sync_registry(registry: dict[str, dict], args) -> None:
+    """Fetch every registered library's collection tree and rewrite the YAML registry."""
+    if not registry:
+        sys.exit("error: nothing to sync — set ZOTERO_USER_ID / ZOTERO_<NAME>_LIBRARY_ID "
+                 f"or seed {_libraries_file()} first.")
+    api_key = (os.environ.get("ZOTERO_API_KEY_RO") or os.environ.get("ZOTERO_API_KEY")
+               or os.environ.get("ZOTERO_API_KEY_RW", ""))
+    if not api_key:
+        sys.exit("error: --sync needs an API key (ZOTERO_API_KEY_RO/_RW or ZOTERO_API_KEY)")
+
+    lines = [
+        "# Zotero library registry — generated by `zotero.py libraries --sync`.",
+        "# Collections are addressable by these names via --collection NAME.",
+        "# Safe to hand-edit; re-running --sync refreshes the collection maps.",
+        "libraries:",
+    ]
+    for name in sorted(registry, key=str.lower):
+        entry = registry[name]
+        lib_cfg = {"api_key": api_key, "write_key": api_key,
+                   "library_id": entry["id"], "library_type": entry.get("type", "group"),
+                   "collection": "", "cache": "refresh"}
+        collections = list(_paginate(lib_cfg, "/collections", {}, None))
+        _, paths = _collection_index(collections)
+        # Zotero allows sibling collections with identical names, so full paths
+        # can collide; suffix the key to keep every entry addressable.
+        counts: dict[str, int] = {}
+        for p in paths.values():
+            counts[p] = counts.get(p, 0) + 1
+        named = {k: (p if counts[p] == 1 else f"{p} [{k}]") for k, p in paths.items()}
+        lines.append(f"  {_yaml_quote(name)}:")
+        lines.append(f"    id: {entry['id']}")
+        lines.append(f"    type: {entry.get('type', 'group')}")
+        if named:
+            lines.append("    collections:")
+            for key in sorted(named, key=lambda k: named[k].lower()):
+                lines.append(f"      {_yaml_quote(named[key])}: {key}")
+        dupes = sum(1 for p, c in counts.items() if c > 1)
+        note = f" ({dupes} duplicate name(s) key-suffixed)" if dupes else ""
+        print(f"  {name}: {len(named)} collection(s){note}", file=sys.stderr)
+
+    path = _libraries_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    print(f"wrote {path}")
+
+
+def cmd_libraries(cfg, args):
+    """List the registered libraries (YAML registry + environment).
+
+    A discovery step before any other command: without --sync it needs no API
+    key and makes no network calls. --sync fetches every registered library's
+    collection tree from the API and (re)writes the registry file, making
+    collections addressable by name.
+    """
+    _load_dotenv()
+    registry = _load_registry()
+    if getattr(args, "sync", False):
+        _sync_registry(registry, args)
+        return
+
+    rows = []
+    for name in sorted(registry, key=str.lower):
+        e = registry[name]
+        rows.append((name, e["id"], e.get("type", "group"),
+                     str(len(e.get("collections", {}))), e.get("source", "")))
+    default_id = os.environ.get("ZOTERO_LIBRARY_ID", "")
+    if default_id and not any(r[1] == default_id for r in rows):
+        rows.append(("(default)", default_id, os.environ.get("ZOTERO_LIBRARY_TYPE", "user"), "0", "env"))
+
+    if getattr(args, "format", "table") == "json":
+        _print([{"name": n, "id": i, "type": t,
+                 "collections": registry.get(n, {}).get("collections", {})}
+                for n, i, t, _c, _s in rows], "json")
+        return
+    if not rows:
+        print(f"(no libraries configured — create {_libraries_file()}, "
+              "or set ZOTERO_USER_ID / ZOTERO_<NAME>_LIBRARY_ID)")
+        return
+    _tabulate(["name", "id", "type", "collections", "source"], rows)
 
 
 def cmd_raw(cfg, args):
@@ -1334,6 +1693,127 @@ def _load_create_state(path: Path) -> dict:
         return {"created": []}
 
 
+# Fields Zotero keeps on every item regardless of type. Anything else is
+# type-specific and may be discarded when itemType changes.
+_TYPE_AGNOSTIC_FIELDS = {
+    "key", "version", "itemType", "title", "creators", "abstractNote", "date",
+    "language", "shortTitle", "url", "accessDate", "rights", "extra", "tags",
+    "collections", "relations", "dateAdded", "dateModified",
+}
+
+
+def _item_type_fields(cfg: dict[str, str], item_type: str) -> set[str]:
+    """Return the set of valid field names for an item type, per the API schema.
+
+    Cached like any other response; the schema changes rarely but we key it to
+    the library version along with everything else, which is harmless.
+    """
+    cached = _cache_get(cfg, "typefields", f"/itemTypeFields/{item_type}", None)
+    if cached is not None:
+        return set(cached)
+    url = f"{API_BASE}/itemTypeFields?itemType={urllib.parse.quote(item_type)}"
+    body, _ = _request(cfg, url)
+    fields = {f.get("field") for f in json.loads(body) if f.get("field")}
+    _cache_put(cfg, "typefields", f"/itemTypeFields/{item_type}", None, sorted(fields))
+    return fields
+
+
+def _update_one_item(cfg: dict[str, str], key: str, updates: dict,
+                     commit: bool, allow_field_loss: bool) -> dict:
+    """Apply a field-level update to one item, version-locked and idempotent."""
+    body, _ = _request(cfg, _url(cfg, f"/items/{key}", None))
+    item = json.loads(body)
+    data = item.get("data", {})
+    version = item.get("version") or data.get("version")
+
+    result = {
+        "key": key,
+        "title": (data.get("title") or "")[:60],
+        "changes": {},
+        "dropped_fields": [],
+    }
+
+    # Skip no-op fields so a re-run costs nothing.
+    changes = {f: v for f, v in updates.items() if data.get(f) != v}
+    if not changes:
+        result["status"] = "skip-already-current"
+        return result
+    result["changes"] = {f: {"from": data.get(f, ""), "to": v} for f, v in changes.items()}
+
+    # An itemType change discards fields the new type does not define. Surface
+    # the ones carrying data before anything is written.
+    new_type = changes.get("itemType")
+    if new_type:
+        try:
+            valid = _item_type_fields(cfg, new_type)
+        except SystemExit:
+            result["status"] = f"error-unknown-itemtype-{new_type}"
+            return result
+        for field, value in data.items():
+            if field in _TYPE_AGNOSTIC_FIELDS or field in valid or field in changes:
+                continue
+            if value not in ("", [], {}, None):
+                result["dropped_fields"].append(field)
+        if result["dropped_fields"] and not allow_field_loss:
+            result["status"] = "blocked-would-lose-fields"
+            return result
+
+    if not commit:
+        result["status"] = "would-update"
+        return result
+
+    status, rbody, _ = _write_request(
+        cfg, _url(cfg, f"/items/{key}", None), "PATCH",
+        json.dumps(changes).encode("utf-8"), version=version,
+    )
+    if status in (200, 204):
+        result["status"] = "updated"
+    elif status == 412:
+        result["status"] = "conflict-version-changed"
+    else:
+        result["status"] = f"error-http-{status}"
+        result["detail"] = rbody.decode("utf-8", "replace")[:200]
+    return result
+
+
+def cmd_update_items(cfg, args):
+    """Update fields on existing items from a plan file. DRY-RUN unless --commit.
+
+    Plan file format (JSON): {"ITEMKEY": {"field": "value", ...}, ...}
+    """
+    plan = json.loads(Path(args.plan).read_text())
+    if not isinstance(plan, dict):
+        sys.exit('error: plan must be a JSON object: {"ITEMKEY": {"field": "value"}}')
+
+    commit = args.commit
+    results = [
+        _update_one_item(cfg, key, updates, commit, args.allow_field_loss)
+        for key, updates in plan.items()
+    ]
+    if commit and any(r["status"] == "updated" for r in results):
+        _invalidate_cache(cfg)
+
+    summary: dict[str, int] = {}
+    for r in results:
+        summary[r["status"]] = summary.get(r["status"], 0) + 1
+
+    blocked = [r for r in results if r["status"] == "blocked-would-lose-fields"]
+    out = {
+        "mode": "COMMIT" if commit else "DRY-RUN (no changes written; pass --commit to apply)",
+        "items": len(results),
+        "fields_to_write": sum(len(r["changes"]) for r in results
+                               if r["status"] in ("would-update", "updated")),
+        "summary": summary,
+        "results": results,
+    }
+    if blocked:
+        out["note"] = (
+            "Some item-type changes would discard non-empty fields. Review "
+            "'dropped_fields' and re-run with --allow-field-loss to proceed."
+        )
+    _print(out, args.format)
+
+
 def cmd_create_items(cfg, args):
     """Create new items from a plan file. DRY-RUN by default; pass --commit to write.
 
@@ -1410,9 +1890,20 @@ def cmd_create_items(cfg, args):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Query a Zotero library via the Web API.")
     p.add_argument("--api-key", help="Overrides ZOTERO_API_KEY.")
+    p.add_argument("--library", metavar="NAME",
+                   help="Select a registered library by name, e.g. SLR, COURSE, or "
+                        "user (the personal library). Names come from the YAML "
+                        "registry ($ZOTERO_LIBRARIES_FILE, default "
+                        "~/.config/claude-zotero/libraries.yml) plus "
+                        "ZOTERO_<NAME>_LIBRARY_ID / ZOTERO_USER_ID env vars. Run the "
+                        "`libraries` subcommand to list what is configured. "
+                        "--library-id/--library-type still win.")
     p.add_argument("--library-id", help="Overrides ZOTERO_LIBRARY_ID.")
     p.add_argument("--library-type", choices=["user", "group"], help="Overrides ZOTERO_LIBRARY_TYPE.")
-    p.add_argument("--collection", help="Overrides ZOTERO_COLLECTION_KEY (8-char key).")
+    p.add_argument("--collection", metavar="NAME_OR_KEY",
+                   help="Collection to scope to: a name from the registry (full "
+                        "path like '02-Screening / Keep', or a unique leaf like "
+                        "'Keep') or a raw 8-char key. Overrides ZOTERO_COLLECTION_KEY.")
     p.add_argument("--no-cache", action="store_true",
                    help="Bypass the local response cache (always hit the API).")
     p.add_argument("--refresh", action="store_true",
@@ -1475,6 +1966,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("cache", help="Inspect or clear the local response cache.")
     sp.add_argument("--clear", action="store_true", help="Delete all cached entries for this library.")
     sp.set_defaults(func=cmd_cache)
+
+    sp = sub.add_parser("libraries", help="List registered libraries (YAML registry + env). "
+                                          "--sync rebuilds the registry from the API.")
+    sp.add_argument("--sync", action="store_true",
+                    help="Fetch each library's collection tree from the API and rewrite "
+                         "the YAML registry file so collections resolve by name.")
+    sp.add_argument("--format", choices=["json", "table"], default="table")
+    sp.set_defaults(func=cmd_libraries)
 
     sp = sub.add_parser("raw", help="Make an arbitrary GET against /users/{id} or /groups/{id}.")
     sp.add_argument("path", help="Path under the library root, e.g. /items/top")
@@ -1558,6 +2057,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_collection_remove)
 
     sp = sub.add_parser(
+        "update-items",
+        help="Update fields on existing items from a plan file (DRY-RUN unless --commit). "
+             "Write-scoped key. Guards item-type changes that would discard data.",
+    )
+    sp.add_argument("--plan", required=True,
+                    help='JSON: {"itemKey": {"field": "value", ...}, ...}')
+    sp.add_argument("--commit", action="store_true", help="Actually write the changes (otherwise dry-run).")
+    sp.add_argument("--allow-field-loss", action="store_true",
+                    help="Permit an itemType change that discards non-empty fields.")
+    sp.add_argument("--format", choices=["json", "table"], default="json")
+    sp.set_defaults(func=cmd_update_items)
+
+    sp = sub.add_parser(
         "create-items",
         help="Create new items from a plan file (DRY-RUN unless --commit). Write-scoped key. "
              "For query-only import skills (e.g. arxiv) to hand off writes to.",
@@ -1575,6 +2087,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    # `libraries` is a discovery command: it must work before credentials or a
+    # library id are configured, so it bypasses resolve_config's validation.
+    if args.cmd == "libraries":
+        cmd_libraries(None, args)
+        return
     cfg = resolve_config(args)
     args.func(cfg, args)
 

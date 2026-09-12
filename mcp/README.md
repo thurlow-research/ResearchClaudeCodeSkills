@@ -55,10 +55,16 @@ paths are untouched.
 
 ```sh
 # 1. keys in ~/.zshrc (this repo commits none — see the root README's Security section)
+# Create the keys account-wide (personal library + all groups): one RO/RW pair
+# then covers every library — no per-library or per-collection keys.
 export ZOTERO_API_KEY_RO=...
 export ZOTERO_API_KEY_RW=...          # only if you want writes
-export ZOTERO_LIBRARY_ID=6505702
-export ZOTERO_LIBRARY_TYPE=group
+export ZOTERO_USER_ID=1234567         # your userID → personal library (--library user)
+export ZOTERO_SLR_LIBRARY_ID=6505702  # named group libraries (--library SLR), repeatable
+# Libraries and their collections can also live in a YAML registry
+# (~/.config/claude-zotero/libraries.yml, or $ZOTERO_LIBRARIES_FILE); generate it with:
+#   python3 skills/zotero/scripts/zotero.py libraries --sync
+# After that, --collection accepts collection *names* as well as 8-char keys.
 export OPENALEX_API_KEY=...
 export OPENALEX_MAILTO=sthurlow@purdue.edu
 export SEMANTIC_SCHOLAR_API_KEY=...

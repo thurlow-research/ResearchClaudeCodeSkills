@@ -48,10 +48,10 @@ Rules:
   it there (or paste it in chat for this conversation only). Do not invent values."""
 
 
-ZOTERO_KEYS = """ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # reads
+ZOTERO_KEYS = """ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # reads (account-wide: personal library + all groups)
 ZOTERO_API_KEY_RW=xxxxxxxxxxxxxxxxxxxxxxxx   # writes (e.g. tag-add --commit); omit if you only read
-ZOTERO_LIBRARY_ID=1234567
-ZOTERO_LIBRARY_TYPE=group"""
+ZOTERO_USER_ID=1234567                       # personal library (--library user)
+ZOTERO_SLR_LIBRARY_ID=6505702                # named group libraries (--library SLR); repeat per group"""
 
 # (old, new) exact-match replacement pairs per skill
 PATCHES = {
@@ -59,20 +59,20 @@ PATCHES = {
         (
             """The script looks for these values in the following order (first hit wins for files; already-set environment variables always take precedence over file values):
 
-1. Command-line flags: `--api-key`, `--library-id`, `--library-type`, `--collection`
+1. Command-line flags: `--api-key`, `--library NAME`, `--library-id`, `--library-type`, `--collection`
 2. Existing shell environment variables
 3. A file pointed to by `$ZOTERO_ENV_FILE` (explicit override)
 4. `./.env` in the current working directory
 5. `~/.config/claude-zotero/.env` — the standard per-user config location
 
-The recommended setup is to keep a single `.env` at `~/.config/claude-zotero/.env`. That way the skill works from any directory and the file lives outside any git repo.
+The recommended setup is to keep a single `.env` at `~/.config/claude-zotero/.env` plus the generated `libraries.yml` beside it. That way the skill works from any directory and the files live outside any git repo.
 
-**Read/write key split (least-privilege).** The script also accepts a split pair — `ZOTERO_API_KEY_RO` (reads) and `ZOTERO_API_KEY_RW` (writes, e.g. `tag-add --commit`): it prefers RO for reads and RW for writes, and falls back to a single `ZOTERO_API_KEY` if that's all that's set. Prefer the split so read-only work never carries a write-capable key.
+**Read/write key split (least-privilege).** The script also accepts a split pair — `ZOTERO_API_KEY_RO` (reads) and `ZOTERO_API_KEY_RW` (writes, e.g. `tag-add --commit`): it prefers RO for reads and RW for writes, and falls back to a single `ZOTERO_API_KEY` if that's all that's set. Prefer the split so read-only work never carries a write-capable key. Both keys are account-wide — the same pair authenticates against the personal library and every group.
 
 If any required variable is missing when the skill is first used, ask the user to supply it. Do not invent values.""",
             block(
                 ZOTERO_KEYS,
-                "ZOTERO_API_KEY_RO=... ZOTERO_LIBRARY_ID=... ZOTERO_LIBRARY_TYPE=group \\\n  python3 scripts/zotero.py collections",
+                "ZOTERO_API_KEY_RO=... ZOTERO_USER_ID=... ZOTERO_SLR_LIBRARY_ID=... \\\n  python3 scripts/zotero.py --library SLR collections",
             ),
         ),
         (

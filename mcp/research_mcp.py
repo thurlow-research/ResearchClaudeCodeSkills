@@ -35,6 +35,8 @@ CREDENTIAL_VARS = (
     "ZOTERO_API_KEY_RW",
     "ZOTERO_LIBRARY_ID",
     "ZOTERO_LIBRARY_TYPE",
+    "ZOTERO_USER_ID",
+    "ZOTERO_LIBRARIES_FILE",
     "ZOTERO_COLLECTION_KEY",
     "OPENALEX_API_KEY",
     "OPENALEX_MAILTO",
@@ -118,8 +120,8 @@ def hydrate_env_from_login_shell() -> None:
     for var in [k for k in os.environ if is_credential_var(k)]:
         value = os.environ.get(var, "")
         # Only redact things long enough to actually be secrets, and never
-        # redact the non-secret contact/id fields.
-        if len(value) >= 12 and not var.endswith(("_MAILTO", "_ID", "_TYPE")):
+        # redact the non-secret contact/id/path fields.
+        if len(value) >= 12 and not var.endswith(("_MAILTO", "_ID", "_TYPE", "_FILE")):
             _SECRET_VALUES.append(value)
 
 
@@ -202,11 +204,18 @@ TOOLS = [
         "script": "zotero.py",
         "description": (
             "Zotero library operations via the Zotero Web API. Credentials come from "
-            "the local shell, not from the caller.\n"
-            "MULTIPLE LIBRARIES: pass --library NAME (e.g. --library SLR) to target a "
-            "specific library by name. Run the `libraries` subcommand first to see what "
-            "is configured. Without it, commands hit the default library, which is "
-            "usually NOT the one you want.\n"
+            "the local shell, not from the caller; the API keys are account-wide, so "
+            "the same key pair works across every configured library.\n"
+            "MULTIPLE LIBRARIES: pass --library NAME (e.g. --library SLR, or "
+            "--library user for the personal library) to target a library by name. "
+            "Run the `libraries` subcommand first — it lists every configured library "
+            "from the YAML registry and how many collections each has mapped. Without "
+            "--library, commands hit the default library, which is usually NOT the "
+            "one you want.\n"
+            "COLLECTIONS BY NAME: --collection accepts a collection name from the "
+            "registry (full path like '02-Screening / Keep', or a unique leaf name) "
+            "as well as a raw 8-char key. `libraries --sync` rebuilds the registry "
+            "from the API when collections changed.\n"
             "Subcommands: collections | items | count | item KEY | search QUERY | tags | "
             "export | attachment KEY | cache | tag-add | create-items | prisma | review | "
             "dedupe | trace KEY | superseded.\n"
