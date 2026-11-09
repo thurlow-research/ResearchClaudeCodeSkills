@@ -71,6 +71,34 @@ just clone and `cp -R skills/*` (above). Build it yourself with `scripts/build-r
 discover (`semantic-scholar`, `exa`) -> import (Zotero, `arxiv`) -> enrich (`openalex`) ->
 de-duplicate (`zotero-merge-prep`) -> screen/triage (`zotero`) -> extract-prep (`zotero-pdf-to-text`).
 
+## Development
+
+The skills stay stdlib-only; the test and CI tooling is dev-only (`requirements-dev.txt`).
+
+```bash
+uv venv && uv pip install -r requirements-dev.txt
+.venv/bin/ruff check .                         # lint + bandit-derived security rules
+.venv/bin/python -m pytest --cov               # tests + repo-wide coverage floor
+.venv/bin/diff-cover coverage.xml --compare-branch=origin/main --fail-under=90   # after --cov-report=xml
+.venv/bin/mutmut run && .venv/bin/python scripts/mutation_gate.py --base origin/main   # ~3 min
+python3 scripts/build-desktop.py               # regenerate desktop/ after editing skills/
+```
+
+CI (`.github/workflows/`) runs on every PR:
+
+| Check | Gate |
+|---|---|
+| ruff | correctness + security lint must pass |
+| pytest | Python 3.9 (the floor), 3.13, 3.14 |
+| coverage | repo-wide floor (`fail_under` in `pyproject.toml`, ratchet it up as tests land); **changed lines ≥ 90%** (diff-cover) |
+| mutation | mutmut over the modules in `[tool.mutmut]`; **mutants on changed lines ≥ 90% killed** (`scripts/mutation_gate.py`) |
+| desktop build | committed `desktop/` must equal a fresh `build-desktop.py` run |
+| TruffleHog | no verified or unverifiable secrets in the pushed commits |
+| CodeQL | `security-extended` queries for Python and the workflows themselves |
+
+Tests never touch the network or your real Zotero config: `tests/conftest.py` blocks sockets and
+points `HOME`, the cache and the library registry at a temp dir.
+
 ## Security
 
 The scripts contain **no keys** — everything is read from environment variables. Never commit

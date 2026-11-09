@@ -1,0 +1,9 @@
+# Dev/CI tooling only — the skills themselves are stdlib-only.
+# pytest 9 needs Python 3.10+; the 3.9 compatibility job gets 8.4.x.
+pytest==9.2.0; python_version >= "3.10"
+pytest==8.4.2; python_version < "3.10"
+pytest-cov==7.1.0; python_version >= "3.10"
+coverage==7.17.2; python_version >= "3.10"
+diff-cover==11.0.1; python_version >= "3.10"
+ruff==0.17.4; python_version >= "3.10"
+mutmut==3.8.1; python_version >= "3.10"

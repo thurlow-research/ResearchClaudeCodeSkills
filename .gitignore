@@ -20,3 +20,11 @@ releases/*.mcpb
 # paper full texts must never land in a public repo
 skills/**/*.txt
 !skills/**/references/*.txt
+
+# dev tooling
+.venv/
+mutants/
+.coverage
+coverage.xml
+.pytest_cache/
+.ruff_cache/
