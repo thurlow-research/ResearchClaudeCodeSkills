@@ -19,6 +19,7 @@ CLIS = [
     "skills/semantic-scholar/scripts/s2.py",
     "skills/zotero-merge-prep/scripts/merge_prep.py",
     "skills/zotero-pdf-to-text/scripts/pdf_to_text.py",
+    "skills/zotero-version-upgrade/scripts/upgrade_version.py",
     "skills/zotero/scripts/zotero.py",
 ]
 

@@ -44,7 +44,7 @@ ignore = [
 "skills/arxiv/scripts/zotero_common.py" = ["S311"]
 # arXiv's own Atom feed over HTTPS; stdlib expat does not resolve external
 # entities and has built-in entity-expansion limits.
-"skills/arxiv/scripts/{check_count,fetch_arxiv_query}.py" = ["S314"]
+"skills/{arxiv/scripts/check_count,arxiv/scripts/fetch_arxiv_query,zotero-version-upgrade/scripts/upgrade_version}.py" = ["S314"]
 # TODO: union_fields() computes tgt_fields but never uses it, so the merged
 # record isn't filtered to fields valid for the target type (DOI is always
 # set, but bookSection has no DOI field). Fix, then drop this ignore.
