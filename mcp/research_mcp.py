@@ -190,7 +190,9 @@ def _args_schema(example: str) -> dict:
             "stdin": {
                 "type": "string",
                 "description": "Optional text piped to the script's stdin (used by "
-                               "openalex enrich and s2 batch, which accept ids that way).",
+                               "openalex enrich and s2 batch, which accept ids that way, "
+                               "and by zotero write commands given `--plan -`, which read "
+                               "the JSON plan from it).",
             },
         },
         "required": ["args"],
@@ -219,9 +221,12 @@ TOOLS = [
             "Subcommands: collections | items | count | item KEY | search QUERY | tags | "
             "export | attachment KEY | cache | tag-add | create-items | prisma | review | "
             "dedupe | trace KEY | superseded.\n"
-            "Writes (tag-add, create-items, update-items) are DRY-RUN unless --commit is "
-            "passed. update-items edits fields on existing records via a plan file mapping "
-            "item keys to field/value pairs.\n"
+            "Writes (tag-add, create-items, update-items, collection-add, "
+            "collection-remove) are DRY-RUN unless --commit is passed. update-items edits "
+            "fields on existing records via a plan mapping item keys to field/value pairs.\n"
+            "PLANS: pass `--plan -` and put the JSON plan in `stdin` — no scratch file "
+            "needed. Example: args [\"--library\", \"SLR\", \"update-items\", \"--plan\", "
+            "\"-\"], stdin '{\"ABCD1234\": {\"date\": \"2024-12-22\"}}'.\n"
             "Use `count` for any 'how many' question — it returns a bare integer instead "
             "of item bodies. Prefer --format table or --fields to keep output small."
         ),
@@ -331,6 +336,9 @@ def run_tool(name: str, arguments: dict) -> tuple[str, bool]:
     args = arguments.get("args", [])
     if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
         return "`args` must be an array of strings.", True
+    stdin_text = arguments.get("stdin")
+    if stdin_text is not None and not isinstance(stdin_text, str):
+        return "`stdin` must be a string.", True
 
     try:
         script = resolve_script(spec["skill"], spec["script"])
@@ -341,9 +349,13 @@ def run_tool(name: str, arguments: dict) -> tuple[str, bool]:
     log(f"exec: {shlex.join(cmd)}")
 
     try:
+        # With no stdin text the child must get DEVNULL, never our stdin: that
+        # is the live JSON-RPC stream, and a script reading it (e.g. `--plan -`
+        # sent without `stdin`) would hang or swallow protocol frames.
+        stdin_kwargs = {"input": stdin_text} if stdin_text else {"stdin": subprocess.DEVNULL}
         proc = subprocess.run(
             cmd,
-            input=arguments.get("stdin", "") or None,
+            **stdin_kwargs,
             capture_output=True,
             text=True,
             timeout=CALL_TIMEOUT,

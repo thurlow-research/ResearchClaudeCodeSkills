@@ -81,12 +81,23 @@ All operations go through `scripts/zotero.py`. **Invoke it with `python3`**, pas
 | `cache` | Inspect the local cache (entry count, size, library version); `--clear` empties it. |
 | `libraries` | List the registered libraries (YAML registry + env vars) with their collection counts — the discovery step before `--library`. `--sync` fetches every library's collection tree from the API and rewrites the registry file so collections resolve by name. |
 | `tag-add` | Add tags to items. **DRY-RUN by default** — prints what it would do; pass `--commit` to write. Use `KEY --add tag` for one item or `--plan FILE.json` (`{"KEY": ["tag", …]}`) for bulk. Idempotent (skips tags already present), version-locked, and invalidates the cache after writing. Requires a write-scoped API key. |
-| `create-items` | Create new items from a plan file. **DRY-RUN by default**; pass `--commit` to write. Plan format: `[{"dedupe_key": "<source>:<id>", "item": {...Zotero item data...}}, ...]` — `dedupe_key` is caller-defined and used only for resume/idempotency (never sent to Zotero). Progress persists to `--state` (default `<plan>.state.json`), so a re-run after an interruption skips whatever already succeeded. This is the shared write path query-only import skills (e.g. `arxiv`) hand a plan off to, instead of each reimplementing Zotero write auth/batching/retries. Batches at 50 items (Zotero's write cap) and invalidates the cache after committing. Requires a write-scoped API key. |
+| `create-items` | Create new items from a plan file. **DRY-RUN by default**; pass `--commit` to write. Plan format: `[{"dedupe_key": "<source>:<id>", "item": {...Zotero item data...}}, ...]` — `dedupe_key` is caller-defined and used only for resume/idempotency (never sent to Zotero). Progress persists to `--state` (default `<plan>.state.json`; for a `--plan -` stdin plan, a plan-hash file under the cache dir, so piping the same plan again resumes), so a re-run after an interruption skips whatever already succeeded. This is the shared write path query-only import skills (e.g. `arxiv`) hand a plan off to, instead of each reimplementing Zotero write auth/batching/retries. Batches at 50 items (Zotero's write cap) and invalidates the cache after committing. Requires a write-scoped API key. |
+| `update-items` | Edit fields on existing items. **DRY-RUN by default** (prints a per-field old → new diff); pass `--commit` to write. Plan: `{"KEY": {"field": "value", …}}`. Version-locked; an `itemType` change that would discard non-empty fields is blocked unless `--allow-field-loss`. Requires a write-scoped API key. |
+| `collection-add` / `collection-remove` | Add items to, or remove them from, collections. **DRY-RUN by default**; pass `--commit` to write. Plan: `{"KEY": ["collectionKey", …]}`. Remove only drops the listed memberships — it never deletes the item. Requires a write-scoped API key. |
 | `prisma` | Report PRISMA-style counts across data sources. Recognizes both the `01-Import(s)/02-Screening` and legacy `Imports/Classification` layouts, the `04-Superseded` stage, and phase containers. Use `--root NAME` to scope to one phase (see below). |
 | `review` | List items currently in-scope for review analysis. Defaults to Keep + Maybe across all data sources. |
 | `dedupe` | Find items appearing in multiple data sources within the given stages. Defaults to Keep + Maybe. |
 | `trace KEY` | Reconstruct one item's full lineage from its collection memberships + tags: sources, query batches, per-screener decisions, supersession, and every folder path it sits in. |
 | `superseded` | List records parked in `04-Superseded` and what replaced them (via the `superseded-by:<key>` tag). `--resolve` fetches each replacement's itemType to flag type transitions (e.g. preprint → journalArticle); `--root` scopes it. Doubles as an integrity check — records lacking the tag have folder-only lineage. |
+
+**Plans from stdin.** Every `--plan` flag accepts `-` to read the JSON plan from stdin instead of a file, which is what to use when there is no shell to write a scratch file (e.g. through the `research` MCP: put the plan in the tool's `stdin` argument and pass `--plan -`):
+
+```bash
+echo '{"ABCD1234": {"date": "2024-12-22"}}' | \
+  python3 scripts/zotero.py --library SLR update-items --plan - --format table
+```
+
+If you do write a plan file, keep it out of `~/Downloads`, `~/Desktop` and `~/Documents`: macOS privacy protection (TCC) blocks the MCP host process from those folders, so the read fails with `PermissionError: Operation not permitted`. A path under `~/Code` or the scratch directory works.
 
 Output defaults to compact JSON so you can parse it; pass `--format table` for human-readable tables in the terminal.
 
