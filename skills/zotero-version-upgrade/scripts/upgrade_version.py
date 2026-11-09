@@ -251,7 +251,7 @@ def published_plan(d, m, args):
     extra = (d.get("extra") or "").rstrip()
     if args.original_date and "original-date:" not in extra:
         extra = f"original-date: {old_date}\n" + extra
-    fields["extra"] = (extra + "\n" + hist).strip()
+    fields["extra"] = (extra.rstrip() + "\n" + hist).strip()
     tags = [f"orig-type:{old_type}", f"orig-date:{old_date}"]
     return fields, tags, sorted(dropped)
 
@@ -276,7 +276,7 @@ def arxiv_plan(d, am, recorded_v, args):
             + ("; abstract replaced with the v%d abstract" % latest_v if "abstractNote" in fields else ""))
     if args.original_date and "original-date:" not in extra:
         extra = f"original-date: {old_date}\n" + extra
-    fields["extra"] = (extra + "\n" + history_line("", old_date, "", note, {})).strip()
+    fields["extra"] = (extra.rstrip() + "\n" + history_line("", old_date, "", note, {})).strip()
     if d.get("url") and re.search(rf"{re.escape(am['id'])}v\d+", d["url"]):
         fields["url"] = re.sub(rf"({re.escape(am['id'])})v\d+", rf"\1v{latest_v}", d["url"])
     tags = [f"orig-date:{old_date}"] if old_date and old_date[:10] != latest_date else []
