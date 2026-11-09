@@ -9,7 +9,12 @@ TXT via Zotero's S3 form-POST flow (create attachment -> authorize -> multipart 
 to S3 -> register). Idempotent: items that already have a .txt attachment are skipped;
 a failed upload deletes its half-created attachment so retries stay clean.
 
+--fetch KEY=URL[,KEY=URL...] first downloads an open-access PDF (arXiv, OSTI, etc.),
+attaches it to KEY as "Full Text PDF" via the same upload flow, then converts it.
+Anything that isn't a real PDF (paywall or landing page) is refused, not attached.
+
 Env: ZOTERO_API_KEY_RW (writes; legacy ZOTERO_API_KEY still works), ZOTERO_LIBRARY_ID, ZOTERO_LIBRARY_TYPE (group|user). DRY-RUN by default; pass --commit to upload.
+--library-id / --library-type override the env (the env default is often the personal library).
 Requires: pdftotext (poppler) on PATH.
 
 Usage:
@@ -18,13 +23,22 @@ Usage:
   python3 pdf_to_text.py --collection KEY --limit 1     # validation batch (test 1 first!)
   python3 pdf_to_text.py --collection KEY               # DRY-RUN (default): convert, do NOT upload
   python3 pdf_to_text.py --collection KEY --commit      # actually upload the TXT attachments
+  python3 pdf_to_text.py --library-id 6505702 --fetch ABCD1234=https://arxiv.org/pdf/2501.00001 --commit
 """
 import argparse, hashlib, json, os, subprocess, sys, tempfile, time, urllib.parse, urllib.request, urllib.error, socket
 from pathlib import Path
 socket.setdefaulttimeout(120)
-KEY=(os.environ.get("ZOTERO_API_KEY_RW") or os.environ.get("ZOTERO_API_KEY") or os.environ.get("ZOTERO_API_KEY_RO","")); LIB=os.environ["ZOTERO_LIBRARY_ID"]
+KEY=(os.environ.get("ZOTERO_API_KEY_RW") or os.environ.get("ZOTERO_API_KEY") or os.environ.get("ZOTERO_API_KEY_RO",""))
+LIB=os.environ.get("ZOTERO_LIBRARY_ID","")
 TYPE=os.environ.get("ZOTERO_LIBRARY_TYPE","group")
 BASE=f"https://api.zotero.org/{'groups' if TYPE=='group' else 'users'}/{LIB}"
+
+
+def set_library(lib_id, lib_type):
+    """--library-id/--library-type override the env (the env default is often the personal library)."""
+    global LIB, TYPE, BASE
+    LIB, TYPE = lib_id, lib_type
+    BASE = f"https://api.zotero.org/{'groups' if TYPE=='group' else 'users'}/{LIB}"
 H={"Zotero-API-Key":KEY,"Zotero-API-Version":"3"}
 STORAGE=Path.home()/"Zotero"/"storage"
 
@@ -71,9 +85,15 @@ def _delete_item(akey):
 
 
 def upload_txt(parent, filename, data):
+    return upload_file(parent, filename, data, "text/plain", filename)
+
+
+def upload_file(parent, filename, data, ctype, title):
     """Zotero file upload: create attachment -> authorize (params=1) -> S3 multipart POST -> register."""
-    res=api("POST","/items",[{"itemType":"attachment","parentItem":parent,"linkMode":"imported_file",
-            "title":filename,"filename":filename,"contentType":"text/plain","charset":"utf-8"}])
+    att={"itemType":"attachment","parentItem":parent,"linkMode":"imported_file",
+         "title":title,"filename":filename,"contentType":ctype}
+    if ctype.startswith("text/"): att["charset"]="utf-8"
+    res=api("POST","/items",[att])
     akey=res["successful"]["0"]["key"]
     try:
         md5=hashlib.md5(data).hexdigest(); mtime=int(time.time()*1000)
@@ -87,7 +107,7 @@ def upload_txt(parent, filename, data):
         for name,val in auth["params"].items():
             parts.append(f'--{b}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{val}\r\n'.encode())
         parts.append(f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-                     f'Content-Type: text/plain\r\n\r\n'.encode()+data+b"\r\n")
+                     f'Content-Type: {ctype}\r\n\r\n'.encode()+data+b"\r\n")
         parts.append(f"--{b}--\r\n".encode())
         urllib.request.urlopen(urllib.request.Request(auth["url"],data=b"".join(parts),
             headers={"Content-Type":f"multipart/form-data; boundary={b}"},method="POST"),timeout=180).read()
@@ -95,8 +115,18 @@ def upload_txt(parent, filename, data):
             {"Content-Type":"application/x-www-form-urlencoded","If-None-Match":"*"})
         return akey,"uploaded"
     except Exception:
-        _delete_item(akey)  # never leave an empty .txt attachment (would block idempotent retry)
+        _delete_item(akey)  # never leave an empty attachment (would block idempotent retry)
         raise
+
+
+def fetch_pdf(url):
+    """Download a PDF from an open URL; refuse anything that isn't actually a PDF (login pages, HTML)."""
+    req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0 (zotero-pdf-to-text fetch)"})
+    with urllib.request.urlopen(req,timeout=180) as r:
+        data=r.read()
+    if not data.startswith(b"%PDF"):
+        raise ValueError(f"not a PDF (got {data[:15]!r}); likely paywalled or a landing page")
+    return data
 
 
 def main():
@@ -106,8 +136,32 @@ def main():
     ap.add_argument("--limit",type=int,default=0)
     ap.add_argument("--dry-run",action="store_true")
     ap.add_argument("--commit",action="store_true",help="actually upload TXTs (default: dry-run, no writes)")
+    ap.add_argument("--fetch",help="comma-list of KEY=URL: download an open-access PDF, attach it to KEY, then convert")
+    ap.add_argument("--library-id",help="override ZOTERO_LIBRARY_ID (e.g. the SLR group id)")
+    ap.add_argument("--library-type",default=None,choices=["group","user"])
     a=ap.parse_args()
-    if not a.collection and not a.items: sys.exit("need --collection or --items")
+    if a.library_id or a.library_type:
+        set_library(a.library_id or LIB, a.library_type or TYPE)
+    if not LIB: sys.exit("no library: set ZOTERO_LIBRARY_ID or pass --library-id")
+    print(f"library: {TYPE} {LIB}")
+    if a.fetch:
+        keys=[]
+        for pair in a.fetch.split(","):
+            k,url=pair.split("=",1); k=k.strip(); keys.append(k)
+            kids=api("GET",f"/items/{k}/children") or []
+            if any((c["data"].get("contentType")=="application/pdf") for c in kids):
+                print(f"  {k}: already has a PDF, skipping fetch"); continue
+            try:
+                pdf=fetch_pdf(url.strip())
+            except Exception as e:
+                print(f"  {k}: FETCH FAIL {e}"); continue
+            if a.dry_run or not a.commit:
+                print(f"  {k} (dry) would attach PDF {len(pdf)//1024}kb from {url}"); continue
+            akey,how=upload_file(k,f"{k}.pdf",pdf,"application/pdf","Full Text PDF")
+            print(f"  {k} -> PDF {akey} {how} ({len(pdf)//1024}kb)")
+            time.sleep(0.5)
+        a.items=",".join(filter(None,[a.items]+keys)) if a.items else ",".join(keys)
+    if not a.collection and not a.items: sys.exit("need --collection, --items, or --fetch")
 
     parents={}; atts=[]
     if a.collection:
