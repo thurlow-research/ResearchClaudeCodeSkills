@@ -45,6 +45,10 @@ def isolated_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("ZOTERO_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.setenv("ZOTERO_LIBRARIES_FILE", str(tmp_path / "libraries.yml"))
+    # With any proxy variable set, urllib reads proxies from the environment
+    # instead of asking macOS (_scproxy). That call aborts in a forked process,
+    # which is how mutmut runs tests, popping a "Python quit unexpectedly" dialog.
+    monkeypatch.setenv("no_proxy", "*")
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
