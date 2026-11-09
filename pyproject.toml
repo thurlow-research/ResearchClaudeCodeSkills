@@ -1,0 +1,67 @@
+# Dev tooling only. The skills and the MCP server stay stdlib-only at runtime
+# (Python 3.9+); nothing here is installed by users.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = "-q --strict-markers"
+
+[tool.coverage.run]
+branch = true
+source = ["mcp", "skills"]
+omit = ["desktop/*", "archive/*", "tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Repo-wide floor. Most of the CLI surface predates the test suite, so this
+# starts at today's baseline and is meant to ratchet up, never down. New and
+# changed lines are held to a much higher bar by diff-cover in CI.
+fail_under = 25
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+extend-exclude = ["desktop", "archive"]
+
+[tool.ruff.lint]
+# Correctness-focused set: pyflakes, pycodestyle errors, bugbear, and the
+# bandit-derived security rules. Style-only rules are left off on purpose so
+# the existing dense scripts don't need a reformat.
+select = ["F", "E9", "B", "S"]
+ignore = [
+    "F541",  # f-string without placeholders: style only
+    "S101",  # assert is fine in tests
+    "S310",  # urlopen on fixed https API hosts is the point of these scripts
+    "S603",  # subprocess with argv lists, never shell=True
+    "S607",  # pdftotext / login shell resolved from PATH by design
+    "S110",  # try/except/pass marks deliberate best-effort cleanup in these CLIs
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "S108"]
+# Retry jitter, not cryptography.
+"skills/arxiv/scripts/zotero_common.py" = ["S311"]
+# arXiv's own Atom feed over HTTPS; stdlib expat does not resolve external
+# entities and has built-in entity-expansion limits.
+"skills/arxiv/scripts/{check_count,fetch_arxiv_query}.py" = ["S314"]
+# TODO: union_fields() computes tgt_fields but never uses it, so the merged
+# record isn't filtered to fields valid for the target type (DOI is always
+# set, but bookSection has no DOI field). Fix, then drop this ignore.
+"skills/zotero-merge-prep/scripts/merge_prep.py" = ["F841"]
+# Zotero's upload API requires the file's MD5; it is not a security use.
+"skills/zotero-pdf-to-text/scripts/pdf_to_text.py" = ["S324"]
+
+[tool.mutmut]
+# Mutation testing measures whether the tests actually check behaviour, not
+# just execute it. Only modules with real unit tests are listed; add a module
+# here once it has them. The CLI --help smoke tests are excluded because they
+# execute everything and assert almost nothing.
+source_paths = ["mcp/research_mcp.py", "skills/zotero/scripts/zotero.py"]
+also_copy = ["tests/", "skills/", "mcp/"]
+pytest_add_cli_args_test_selection = ["tests/test_zotero_plan_input.py", "tests/test_research_mcp.py"]
+
+[tool.mutation-gate]
+# Declarative config, not logic: mutating help text and schema strings only
+# produces survivors no sensible test would kill.
+exclude_functions = ["build_parser", "_args_schema"]

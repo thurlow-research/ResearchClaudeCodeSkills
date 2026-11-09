@@ -12,6 +12,7 @@ anchor no longer matches, so a drifted source can't silently ship unpatched.
 Usage: python3 scripts/build-desktop.py
 """
 import shutil
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -253,6 +254,23 @@ def shorten_description(name: str, text: str, errors: list) -> str:
     return text[: m.start(1)] + short + text[m.end(1):]
 
 
+ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+
+
+def shippable_files(src_dir: Path) -> list[Path]:
+    """Files under src_dir that git considers part of the repo.
+
+    Tracked files plus untracked ones that .gitignore doesn't exclude, so local
+    debris (zotero.py.bak-*, __pycache__, paper full-text .txt files) can never
+    end up in a published zip, while a new file works before it is committed.
+    """
+    out = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."],
+        cwd=src_dir, capture_output=True, text=True, check=True,
+    ).stdout
+    return sorted(Path(p) for p in out.split("\0") if p and (src_dir / p).is_file())
+
+
 def main() -> None:
     if SKILLS_OUT.exists():
         shutil.rmtree(SKILLS_OUT)
@@ -268,10 +286,9 @@ def main() -> None:
             errors.append(f"{name}: missing source dir {src_dir}")
             continue
         dst_dir = SKILLS_OUT / name
-        shutil.copytree(
-            src_dir, dst_dir,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"),
-        )
+        for rel in shippable_files(src_dir):
+            (dst_dir / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_dir / rel, dst_dir / rel)
 
         skill_md = dst_dir / "SKILL.md"
         text = skill_md.read_text(encoding="utf-8")
@@ -290,7 +307,12 @@ def main() -> None:
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for f in sorted(dst_dir.rglob("*")):
                 if f.is_file():
-                    zf.write(f, f.relative_to(SKILLS_OUT))
+                    # Fixed timestamp and mode: an unchanged skill rebuilds
+                    # byte-identical, so CI can check the committed output.
+                    info = zipfile.ZipInfo(str(f.relative_to(SKILLS_OUT)), date_time=ZIP_EPOCH)
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    info.external_attr = 0o644 << 16
+                    zf.writestr(info, f.read_bytes())
         print(f"built {zip_path.relative_to(REPO)}")
 
     if errors:

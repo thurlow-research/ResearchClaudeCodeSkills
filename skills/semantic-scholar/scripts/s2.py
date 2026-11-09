@@ -30,7 +30,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 GRAPH_BASE = "https://api.semanticscholar.org/graph/v1"
 REC_BASE = "https://api.semanticscholar.org/recommendations/v1"

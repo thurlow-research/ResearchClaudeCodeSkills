@@ -35,7 +35,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 API_BASE = "https://api.zotero.org"
 USER_AGENT = "claude-zotero-skill/0.1"
@@ -1415,7 +1415,6 @@ def cmd_superseded(cfg, args):
     collections = _paginate(cfg, "/collections", {}, None)
     if args.root:
         data_sources = _find_data_sources(collections, args.root)
-        scope_keys = {c["key"] for c in data_sources}
         tree = _build_collection_tree(collections)
         # superseded collections living under in-scope sources' stage parents
         sup_cols = []
@@ -1476,6 +1475,33 @@ def cmd_superseded(cfg, args):
         else:
             arrow = f"  ->  {r['superseded_by']}" if r["superseded_by"] else "  (no superseded-by tag)"
         print(f"  {r['old_key']} ({r['old_type']:<15}) {r['title'][:55]}{arrow}")
+
+
+# ---------------------------------------------------------------------------
+# Plan input
+# ---------------------------------------------------------------------------
+
+def _read_plan_text(arg: str) -> str:
+    """Return the raw text of a --plan argument. `-` means stdin.
+
+    Stdin lets a host with no shell (e.g. the research MCP driven from
+    claude.ai) pass a plan inline instead of writing a scratch file first.
+    """
+    if arg == "-":
+        text = sys.stdin.read()
+        if not text.strip():
+            sys.exit("error: --plan - was given but stdin is empty")
+        return text
+    return Path(arg).read_text()
+
+
+def _load_plan(arg: str) -> Any:
+    text = _read_plan_text(arg)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        source = "stdin" if arg == "-" else arg
+        sys.exit(f"error: plan from {source} is not valid JSON: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -1558,7 +1584,7 @@ def cmd_collection_remove(cfg, args):
     Plan file format (JSON): {"ITEMKEY": ["collectionKey", ...], ...}
     Only removes the listed memberships; never deletes the item or other links.
     """
-    plan = json.loads(Path(args.plan).read_text())
+    plan = _load_plan(args.plan)
     commit = args.commit
     results = [_remove_collections_from_item(cfg, k, list(v), commit) for k, v in plan.items()]
     if commit:
@@ -1613,7 +1639,7 @@ def cmd_collection_add(cfg, args):
 
     Plan file format (JSON): {"ITEMKEY": ["collectionKey", ...], ...}
     """
-    plan = json.loads(Path(args.plan).read_text())
+    plan = _load_plan(args.plan)
     commit = args.commit
     results = [_add_collections_to_item(cfg, k, list(v), commit) for k, v in plan.items()]
     if commit:
@@ -1638,7 +1664,7 @@ def cmd_tag_add(cfg, args):
     Plan file format (JSON): {"ITEMKEY": ["tag1", "tag2"], ...}
     """
     if args.plan:
-        plan = json.loads(Path(args.plan).read_text())
+        plan = _load_plan(args.plan)
     elif args.key and args.add:
         plan = {args.key: args.add}
     else:
@@ -1781,7 +1807,7 @@ def cmd_update_items(cfg, args):
 
     Plan file format (JSON): {"ITEMKEY": {"field": "value", ...}, ...}
     """
-    plan = json.loads(Path(args.plan).read_text())
+    plan = _load_plan(args.plan)
     if not isinstance(plan, dict):
         sys.exit('error: plan must be a JSON object: {"ITEMKEY": {"field": "value"}}')
 
@@ -1814,6 +1840,24 @@ def cmd_update_items(cfg, args):
     _print(out, args.format)
 
 
+def _create_state_path(cfg: dict[str, str], plan_arg: str, state_arg: str | None,
+                       plan_text: str) -> Path:
+    """Where create-items records progress for resume.
+
+    A stdin plan has no file to sit beside, so its state is keyed by a hash of
+    the plan text: piping the same plan again finds the same state and resumes.
+    """
+    if state_arg:
+        return Path(state_arg)
+    if plan_arg == "-":
+        digest = hashlib.sha256(plan_text.encode()).hexdigest()[:16]
+        state_dir = _cache_dir(cfg) / "create-state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir / f"stdin-{digest}.state.json"
+    plan_path = Path(plan_arg)
+    return plan_path.with_suffix(plan_path.suffix + ".state.json")
+
+
 def cmd_create_items(cfg, args):
     """Create new items from a plan file. DRY-RUN by default; pass --commit to write.
 
@@ -1823,12 +1867,16 @@ def cmd_create_items(cfg, args):
     `dedupe_key` is caller-defined (e.g. "arxiv:2405.01234", "openalex:W123456789")
     and used only for resume/idempotency tracking across interrupted runs — it is
     never sent to Zotero. Progress is persisted to --state (default:
-    <plan>.state.json next to the plan file), so re-running the same plan after an
+    <plan>.state.json next to the plan file, or a plan-hash file in the cache dir
+    when the plan comes from stdin), so re-running the same plan after an
     interruption skips whatever already succeeded.
     """
-    plan_path = Path(args.plan)
-    entries = json.loads(plan_path.read_text())
-    state_path = Path(args.state) if args.state else plan_path.with_suffix(plan_path.suffix + ".state.json")
+    plan_text = _read_plan_text(args.plan)
+    try:
+        entries = json.loads(plan_text)
+    except json.JSONDecodeError as exc:
+        sys.exit(f"error: plan is not valid JSON: {exc}")
+    state_path = _create_state_path(cfg, args.plan, args.state, plan_text)
     state = _load_create_state(state_path)
     created_keys = set(state.get("created", []))
 
@@ -2033,7 +2081,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("key", nargs="?", help="Single item key (or use --plan for bulk).")
     sp.add_argument("--add", action="append", help="Tag to add (repeatable). Used with a single KEY.")
-    sp.add_argument("--plan", help="JSON file mapping item keys to lists of tags to add.")
+    sp.add_argument("--plan", help="JSON file mapping item keys to lists of tags to add (`-` reads stdin).")
     sp.add_argument("--commit", action="store_true", help="Actually write the changes (otherwise dry-run).")
     sp.add_argument("--format", choices=["json", "table"], default="json")
     sp.set_defaults(func=cmd_tag_add)
@@ -2042,7 +2090,8 @@ def build_parser() -> argparse.ArgumentParser:
         "collection-add",
         help="Add items to collections from a plan file (DRY-RUN unless --commit). Write-scoped key.",
     )
-    sp.add_argument("--plan", required=True, help="JSON: {\"itemKey\": [\"collectionKey\", ...], ...}")
+    sp.add_argument("--plan", required=True,
+                    help="JSON file (`-` reads stdin): {\"itemKey\": [\"collectionKey\", ...], ...}")
     sp.add_argument("--commit", action="store_true", help="Actually write the changes (otherwise dry-run).")
     sp.add_argument("--format", choices=["json", "table"], default="json")
     sp.set_defaults(func=cmd_collection_add)
@@ -2051,7 +2100,8 @@ def build_parser() -> argparse.ArgumentParser:
         "collection-remove",
         help="Remove items from collections from a plan file (DRY-RUN unless --commit). Write-scoped key.",
     )
-    sp.add_argument("--plan", required=True, help="JSON: {\"itemKey\": [\"collectionKey\", ...], ...}")
+    sp.add_argument("--plan", required=True,
+                    help="JSON file (`-` reads stdin): {\"itemKey\": [\"collectionKey\", ...], ...}")
     sp.add_argument("--commit", action="store_true", help="Actually write the changes (otherwise dry-run).")
     sp.add_argument("--format", choices=["json", "table"], default="json")
     sp.set_defaults(func=cmd_collection_remove)
@@ -2062,7 +2112,7 @@ def build_parser() -> argparse.ArgumentParser:
              "Write-scoped key. Guards item-type changes that would discard data.",
     )
     sp.add_argument("--plan", required=True,
-                    help='JSON: {"itemKey": {"field": "value", ...}, ...}')
+                    help='JSON file (`-` reads stdin): {"itemKey": {"field": "value", ...}, ...}')
     sp.add_argument("--commit", action="store_true", help="Actually write the changes (otherwise dry-run).")
     sp.add_argument("--allow-field-loss", action="store_true",
                     help="Permit an itemType change that discards non-empty fields.")
@@ -2075,8 +2125,9 @@ def build_parser() -> argparse.ArgumentParser:
              "For query-only import skills (e.g. arxiv) to hand off writes to.",
     )
     sp.add_argument("--plan", required=True,
-                    help='JSON array: [{"dedupe_key": "...", "item": {...Zotero item data...}}, ...]')
-    sp.add_argument("--state", help="Resume-state file (default: <plan>.state.json).")
+                    help='JSON array file (`-` reads stdin): [{"dedupe_key": "...", "item": {...}}, ...]')
+    sp.add_argument("--state", help="Resume-state file (default: <plan>.state.json; for a stdin "
+                    "plan, a plan-hash file under the cache dir).")
     sp.add_argument("--commit", action="store_true", help="Actually write the changes (otherwise dry-run).")
     sp.add_argument("--format", choices=["json", "table"], default="json")
     sp.set_defaults(func=cmd_create_items)

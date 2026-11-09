@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON: "3.13"
+
+jobs:
+  lint:
+    name: Lint + security lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv venv -p "$PYTHON" && uv pip install -r requirements-dev.txt
+      - run: .venv/bin/ruff check --output-format=github .
+
+  test:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the documented floor (macOS system python3); 3.14 is current.
+        python: ["3.9", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv venv -p "${{ matrix.python }}" && uv pip install -r requirements-dev.txt
+      - run: .venv/bin/python -m pytest
+
+  coverage:
+    name: Coverage (floor + changed lines)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv venv -p "$PYTHON" && uv pip install -r requirements-dev.txt
+      # Repo-wide floor comes from [tool.coverage.report] fail_under.
+      - run: .venv/bin/python -m pytest --cov --cov-report=term --cov-report=xml
+      - name: Changed lines must be >= 90% covered
+        if: github.event_name == 'pull_request'
+        run: |
+          .venv/bin/diff-cover coverage.xml \
+            --compare-branch="origin/${{ github.base_ref }}" \
+            --fail-under=90 \
+            --format markdown:diff-cover.md
+          cat diff-cover.md >> "$GITHUB_STEP_SUMMARY"
+
+  mutation:
+    name: Mutation testing (changed lines)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv venv -p "$PYTHON" && uv pip install -r requirements-dev.txt
+      - name: mutmut run
+        run: |
+          # mutmut exits non-zero when mutants survive; the gate below decides.
+          .venv/bin/mutmut run --max-children 4 || true
+          .venv/bin/mutmut export-cicd-stats
+      - name: Mutants on changed lines must be >= 90% killed
+        run: .venv/bin/python scripts/mutation_gate.py --base "origin/${{ github.base_ref }}" --fail-under 90
+      - name: Repo-wide mutation stats (informational)
+        if: always()
+        run: |
+          {
+            echo '### Repo-wide mutmut stats (informational)'
+            echo '```json'
+            cat mutants/mutmut-cicd-stats.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  desktop-build:
+    name: Desktop build is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv run --no-project -p 3.9 scripts/build-desktop.py
+      - name: Committed desktop/ must match a fresh build
+        run: |
+          if ! git diff --exit-code --stat -- desktop/; then
+            echo "::error::desktop/ is stale. Run: python3 scripts/build-desktop.py and commit the result."
+            exit 1
+          fi
+
+  secrets:
+    name: Secret scan (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb # v3.99.8
+        with:
+          # Fail on any verified or unknown-status credential, not just verified.
+          extra_args: --results=verified,unknown
