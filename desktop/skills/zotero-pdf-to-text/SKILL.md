@@ -50,11 +50,24 @@ Environment caveats (claude.ai sandbox):
 
 ## Usage
 ```
-python3 scripts/pdf_to_text.py --collection KEY[,KEY...]   # every item in these collections
+python3 scripts/pdf_to_text.py --collection KEY[,KEY...]   # DRY-RUN (default): convert, don't upload
 python3 scripts/pdf_to_text.py --items KEY[,KEY...]        # explicit parent item keys
-python3 scripts/pdf_to_text.py --collection KEY --limit 1  # ALWAYS test 1 first
-python3 scripts/pdf_to_text.py --collection KEY --dry-run  # convert locally, don't upload
+python3 scripts/pdf_to_text.py --collection KEY --limit 1 --commit   # ALWAYS test 1 first
+python3 scripts/pdf_to_text.py --collection KEY --commit   # upload the TXT attachments
+python3 scripts/pdf_to_text.py --fetch KEY=URL[,KEY=URL...] --commit # attach an open-access PDF, then convert
 ```
+
+## Items with no PDF: finding one (Scite, optional)
+`--fetch` needs a URL that serves the PDF itself; anything else (paywall, landing page) is
+refused. When an item has no PDF and no obvious open-access copy (arXiv, the DOI landing
+page), and **Scite tools are loaded**, ask Scite before giving up:
+- `get_pdf_link` with the item's DOI → if it returns a direct PDF URL, pass it to `--fetch`.
+- If Scite has no PDF link but `read_fulltext` returns text, report that to the user rather
+  than uploading it: this skill only attaches text extracted from a PDF it also attaches.
+
+Scite tool names carry a host prefix (`mcp__claude_ai_Scite__…` for the claude.ai connector,
+`mcp__scite__…` if added with `claude mcp add`); match on the bare name. If no Scite tools
+are loaded, skip this step.
 
 ## What it does, per item
 1. Find the item's **PDF** child attachment. Read it from `~/Zotero/storage/<attachKey>/<file>`

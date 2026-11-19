@@ -35,6 +35,11 @@ python3 scripts/upgrade_version.py KEY --item-json item.json            # offlin
 - **Re-verify every cited figure against the new full text** before citing it; revisions change numbers (e.g., Zhao v4 moved 61%/10.5% to 57%/11.8%; Liu v3 replaced ">15%" with "7.5–14.8%"). The report prints the new PDF link.
 - **Check the citation year.** Upgrading a 2025 preprint to a 2026 revision changes "(Author, 2025)" to "(Author, 2026)" after Refresh in Word.
 - Attach the new PDF to the record so the library's full text matches what's cited.
+- **Check for retractions (Scite, optional).** If Scite tools are loaded, run `verify_papers`
+  on the upgraded DOI. Report any retraction, correction or expression of concern to the
+  user next to the upgrade; don't tag or edit the record for it unless they ask. Scite tool
+  names carry a host prefix (`mcp__claude_ai_Scite__…`, `mcp__scite__…`); match on the bare
+  name, and skip this if none are loaded.
 
 ## Known limits
 - Published versions not yet in Crossref (e.g., an accepted paper before proceedings appear) are not found; re-run later.

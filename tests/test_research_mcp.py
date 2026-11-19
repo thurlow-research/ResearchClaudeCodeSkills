@@ -146,10 +146,21 @@ def rpc(mcp, capsys):
     return send
 
 
-def test_initialize_echoes_protocol(rpc):
+def test_initialize_echoes_protocol(rpc, mcp):
     resp = rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2099-01-01"}})
     assert resp["result"]["protocolVersion"] == "2099-01-01"
     assert resp["result"]["serverInfo"]["name"] == "research"
+    assert resp["result"]["instructions"] == mcp.INSTRUCTIONS
+
+
+def test_instructions_name_real_tools():
+    # The Scite pairing hints must point at tools this server actually exposes
+    # (a fresh load: the mcp fixture swaps TOOLS for a stub).
+    real = load_script("mcp/research_mcp.py")
+    for name in ("semantic_scholar", "openalex", "zotero_upgrade_version",
+                 "zotero_merge_prep", "zotero_pdf_to_text"):
+        assert name in real.TOOLS_BY_NAME
+        assert name in real.INSTRUCTIONS
 
 
 def test_tools_list_hides_internal_fields(rpc):
