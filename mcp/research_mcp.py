@@ -278,6 +278,24 @@ TOOLS = [
         "inputSchema": _args_schema('["find", "Attention is all you need"]'),
     },
     {
+        "name": "zotero_upgrade_version",
+        "skill": "zotero-version-upgrade",
+        "script": "upgrade_version.py",
+        "description": (
+            "Upgrade a Zotero record to the newest version of the same work: a newer "
+            "arXiv revision, or the published journal/proceedings version of a preprint "
+            "(arXiv-supplied DOI, else a Crossref title+first-author match). The record "
+            "is updated to the newest version; history is kept in orig-type:/orig-date: "
+            "tags and an Extra line (including any fields the type change dropped).\n"
+            "Usage: KEY [KEY ...] --library SLR [--commit] [--no-abstract] "
+            "[--original-date] [--no-published].\n"
+            "DRY-RUN unless --commit. After any upgrade, re-verify cited figures against "
+            "the new full text (the report prints the PDF link) and check whether the "
+            "citation year changed."
+        ),
+        "inputSchema": _args_schema('["BJQGEUQH", "--library", "SLR"]'),
+    },
+    {
         "name": "zotero_pdf_to_text",
         "skill": "zotero-pdf-to-text",
         "script": "pdf_to_text.py",
