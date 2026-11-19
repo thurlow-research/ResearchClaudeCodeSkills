@@ -1,6 +1,6 @@
 # Claude Desktop / claude.ai variant
 
-The same five skills as [`skills/`](../skills), repackaged for the **Claude Desktop app
+The same seven skills as [`skills/`](../skills), repackaged for the **Claude Desktop app
 and claude.ai** (Settings-uploaded skills running in Claude's code-execution sandbox)
 instead of Claude Code, **plus Exa** (added as a native Connector rather than a skill zip
 — see [below](#exa-connector-not-a-skill-zip)). The Python CLIs are byte-identical; only
@@ -49,9 +49,11 @@ Notes:
 - **Don't add `ZOTERO_API_KEY_RW`** to stored instructions — Claude's project/global
   instructions have no secure secret storage, and a write-scoped key sitting there is
   readable by anyone the project is shared with. `zotero-merge-prep` and
-  `zotero-pdf-to-text` are write-only tools (there's no read-only mode), so if you install
-  them, paste `ZOTERO_API_KEY_RW=...` into the chat for that one conversation instead —
-  never into instructions.
+  `zotero-pdf-to-text` write on every real run, and `zotero-version-upgrade` writes with
+  `--commit`, so when you use them, paste `ZOTERO_API_KEY_RW=...` into the chat for that one
+  conversation instead — never into instructions.
+- `zotero-version-upgrade` needs the `zotero` skill uploaded as well: it runs `zotero.py`
+  from the sibling skill folder.
 - Project instructions are visible to anyone the project is shared with — keep projects
   holding keys private, and use least-privilege keys (e.g. `ZOTERO_API_KEY_RO` there,
   never `_RW`).

@@ -1,6 +1,6 @@
 # Setting Up the Ideal Research Environment
 
-This repo's six skills plus the `exa` plugin cover the SLR pipeline end to end (see the
+This repo's seven skills plus the `exa` plugin cover the SLR pipeline end to end (see the
 [repo README](../README.md#a-typical-review) for that pipeline) — this doc adds the
 remaining piece, a handful of **external MCP connectors** that extend the same environment
 with paper discovery, citation verification, and full-text access, and walks through getting
@@ -8,7 +8,7 @@ the *whole* environment running on **Claude Code** and on **Claude Desktop / cla
 since the two platforms wire credentials and connectors up differently.
 
 This is the map; it delegates to the docs that already own each piece rather than repeating
-them: [`README.md`](../README.md) and [`docs/SETUP.md`](SETUP.md) for the repo's own 6 skills
+them: [`README.md`](../README.md) and [`docs/SETUP.md`](SETUP.md) for the repo's own 7 skills
 + `exa`, [`desktop/README.md`](../desktop/README.md) for the Desktop packaging of both.
 
 ## The external MCP connectors
@@ -126,7 +126,7 @@ platform.
 
 | | Claude Code | Claude Desktop |
 |---|---|---|
-| This repo's 6 skills | `cp -R skills/* ~/.claude/skills/` | upload each zip from `desktop/zips/` |
+| This repo's 7 skills | `cp -R skills/* ~/.claude/skills/` | upload each zip from `desktop/zips/` |
 | Exa | `/plugin install exa@claude-plugins-official` | Settings -> Connectors |
 | alphaXiv / Scite / Scholar Gateway | syncs automatically once added as a Connector | Settings -> Connectors (do it here) |
 | papersflow | `claude mcp add --scope user ...` | Settings -> Connectors -> Add custom connector |
