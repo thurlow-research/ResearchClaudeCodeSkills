@@ -100,3 +100,9 @@ python3 scripts/openalex.py references 10.1145/3610721 --limit 100
 - Batch endpoints use OpenAlex OR-filters (≤50 ids/page); `enrich` fetches per-id (cached),
   which is simplest and fully cache-friendly for incremental backfills.
 - See `references/openalex-api.md` for raw API details.
+- **Citation stance (Scite, optional).** OpenAlex citation edges say *that* a paper is cited,
+  not *how*. When the question is whether later work backs a paper up, and Scite tools are
+  loaded, use Scite's `citation_graph` (supporting / contrasting / mentioning per edge) or
+  `get_citation_statements` on the DOI. Scite tool names carry a host prefix
+  (`mcp__claude_ai_Scite__…`, `mcp__scite__…`); match on the bare name, and skip this if
+  none are loaded.

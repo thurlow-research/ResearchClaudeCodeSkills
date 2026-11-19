@@ -64,3 +64,9 @@ python3 scripts/merge_prep.py prep --keys AUS8GZVE,JAHHFHPN,H2BEFSP9
   the records are now identical enough to merge manually with confidence.
 - Cross-type is the headline case: this is what makes a preprint + its published
   version mergeable at all.
+- **Retraction check before merging (Scite, optional).** If Scite tools are loaded, run
+  `verify_papers` on the DOIs the copies carry. A retraction or correction notice on one
+  copy is worth telling the user before they merge, since the merged record keeps one DOI.
+  Report only; don't tag or edit for it unless asked. Scite tool names carry a host prefix
+  (`mcp__claude_ai_Scite__…`, `mcp__scite__…`); match on the bare name, and skip this if
+  none are loaded.
