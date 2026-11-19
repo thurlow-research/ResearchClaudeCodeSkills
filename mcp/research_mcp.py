@@ -199,6 +199,25 @@ def _args_schema(example: str) -> dict:
     }
 
 
+# Sent as the initialize result's `instructions`. This server can't call other
+# MCP servers, so pairing with Scite is the model's job; this tells it when.
+INSTRUCTIONS = (
+    "Tools here run Scott's research CLIs (Zotero, OpenAlex, Semantic Scholar, arXiv) "
+    "with credentials from the local shell.\n"
+    "If Scite tools are also loaded (any prefix, e.g. mcp__claude_ai_Scite__ or "
+    "mcp__scite__; match on the bare name), pair them with these tools. They are "
+    "optional; skip them when absent.\n"
+    "- Topic search: Scite search_literature alongside semantic_scholar search. It "
+    "matches full text and citation statements and returns the excerpts; dedupe by DOI.\n"
+    "- Citation stance: Scite citation_graph / get_citation_statements say whether "
+    "citing work supports or contrasts a paper; openalex and semantic_scholar don't.\n"
+    "- Retractions: run Scite verify_papers on DOIs after zotero_upgrade_version, before "
+    "a zotero_merge_prep merge, and on snowball shortlists. Report findings; don't tag "
+    "or edit records for them unless asked.\n"
+    "- Missing PDFs: Scite get_pdf_link on the DOI; a direct PDF URL can go to "
+    "zotero_pdf_to_text --fetch KEY=URL."
+)
+
 TOOLS = [
     {
         "name": "zotero",
@@ -431,6 +450,7 @@ def handle(msg: dict) -> None:
             "protocolVersion": requested,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+            "instructions": INSTRUCTIONS,
         })
 
     elif method == "tools/list":

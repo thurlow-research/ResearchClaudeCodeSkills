@@ -25,6 +25,25 @@ respectively — not in the middle of the Zotero import/dedupe chain.
 | Scholar Gateway | scholarly full-text/search gateway | account connector (set up once, syncs everywhere) |
 | papersflow | paper workflow tooling (`doxa.papersflow.ai`) | pending — authenticates on first use |
 
+### How the skills use Scite
+
+Scite is optional. The skills mention it only as "if Scite tools are loaded" steps, so
+everything works without it. When it is connected (with your own Scite account, via OAuth;
+no key goes in the shell or this repo), Claude pairs it with the skills:
+
+| Scite tool | Used by | For |
+|---|---|---|
+| `search_literature` | `semantic-scholar` | topic search over full text and citation statements, with the matching excerpts; a second source next to S2 `search` |
+| `citation_graph`, `get_citation_statements` | `semantic-scholar`, `openalex` | whether citing work *supports* or *contrasts* a paper, which S2 intents and OpenAlex edges don't say |
+| `verify_papers` | `zotero-version-upgrade`, `zotero-merge-prep`, `semantic-scholar` | retraction / correction / expression-of-concern check; reported, never auto-tagged |
+| `get_pdf_link` | `zotero-pdf-to-text` | a direct PDF URL for an item with none, passed to `--fetch` |
+
+The skill scripts never call Scite themselves (one MCP server can't call another); Claude does,
+between script runs. The local `research` MCP server sends the same pairing hints in its
+`initialize` instructions, so Desktop and cloud sessions get them too. Tool names carry a
+host prefix (`mcp__claude_ai_Scite__…` for the account connector, `mcp__scite__…` for a
+`claude mcp add` copy); the skills match on the bare name.
+
 **A note on evaluating new connectors before adding them.** Before registering anything here,
 check whether it's a genuine hosted API from an identifiable provider (the four above all are)
 versus a third-party "skill package" pulled from an individual's GitHub repo via a tool like

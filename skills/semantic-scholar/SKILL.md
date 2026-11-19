@@ -58,6 +58,10 @@ python3 scripts/s2.py snowball DOI:10.1016/j.infsof.2008.09.009 ARXIV:1706.03762
 
 **Why provenance matters for an SLR:** a paper reached from *multiple* seeds, or via an *influential methodology* citation, is a stronger inclusion candidate than one reached once as a background mention. Surface that signal when presenting candidates; don't flatten the list to titles.
 
+**Topic search (Scite, optional).** For keyword/topic discovery, Scite's `search_literature` is a useful second source next to S2 `search`: it matches against full text and citation statements, not just title/abstract, and returns the matching excerpts, so you can see *why* a paper hit. Use it to widen a seed set or to find papers that discuss a claim without naming it in the abstract. Results come back with DOIs; dedupe them against the S2 pool by DOI before presenting, and record the Scite query string alongside the S2 one for the review's search log.
+
+**Citation stance (Scite, optional).** S2 `intents` say *why* a paper cites (background / methodology / result), not whether it agrees. If Scite tools are loaded, run Scite's `citation_graph` on the strongest candidates (or the seeds) to see which edges are supporting or contrasting, and `verify_papers` on the shortlist to catch retractions before it goes to the user. Scite tool names carry a host prefix (`mcp__claude_ai_Scite__…`, `mcp__scite__…`); match on the bare name, and skip this if none are loaded.
+
 ## Caching
 
 Every GET (and batch POST) is cached on disk at `~/.cache/claude-s2` (override `S2_CACHE_DIR`) with a TTL — default **7 days** (`S2_CACHE_TTL` seconds), since paper metadata and citation edges are near-static. Repeat snowball runs over overlapping seed sets become near-free, which matters because the API is the bottleneck.
