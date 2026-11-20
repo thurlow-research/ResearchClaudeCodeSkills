@@ -52,7 +52,7 @@ Scite/Scholar Gateway, on both Claude Code and Claude Desktop) ->
 ## Repository layout
 
 ```
-skills/      the 6 custom skills (SKILL.md + scripts + reference docs)
+skills/      the 7 custom skills (SKILL.md + scripts + reference docs)
 docs/        SETUP.md — full setup & reference guide
              RESEARCH_ENVIRONMENT.md — full environment incl. external MCP connectors, both platforms
 releases/    build-output dir; the archive is published via GitHub Releases (not committed)

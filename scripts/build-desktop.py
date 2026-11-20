@@ -206,6 +206,33 @@ Environment caveats (claude.ai sandbox):
   Code on their machine instead).""",
         ),
     ],
+    "zotero-version-upgrade": [
+        (
+            """## Commands
+""",
+            """## Setup
+Required: `ZOTERO_API_KEY_RO` (reads) and `ZOTERO_API_KEY_RW` (a **WRITE** key — `--commit`
+edits records). Name the library with `ZOTERO_<NAME>_LIBRARY_ID` (or `ZOTERO_USER_ID`) and
+pass `--library NAME`. Calls arXiv (`export.arxiv.org`) and Crossref (`api.crossref.org`).
+
+"""
+            + block(
+                ZOTERO_KEYS,
+                "ZOTERO_API_KEY_RO=... ZOTERO_API_KEY_RW=... ZOTERO_SLR_LIBRARY_ID=... \\\n"
+                "  python3 scripts/upgrade_version.py KEY --library SLR --plan-dir /tmp/zotero-plans",
+            )
+            + """
+
+Environment caveats (claude.ai sandbox):
+- **Upload the `zotero` skill too.** Every read and write goes through its `zotero.py`,
+  which this script finds in the sibling `zotero/` skill folder. Without it the script
+  stops with "could not locate zotero.py".
+- Pass `--plan-dir /tmp/zotero-plans`: the default plan directory is a path on Scott's Mac.
+
+## Commands
+""",
+        ),
+    ],
 }
 
 

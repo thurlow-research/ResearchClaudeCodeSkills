@@ -1,0 +1,85 @@
+---
+name: zotero-version-upgrade
+description: Upgrade a Zotero record to the newest version of the same work, keeping the old version as history. Detects (1) a newer arXiv revision of a preprint (v2 -> v4) and (2) a published journal or proceedings version of a preprint (via the arXiv-supplied DOI or a Crossref title+author match). Updates the record to the newest version and records lineage in orig-type:/orig-date: tags plus an Extra history line, so the record becomes a "merged" view of all versions. Use whenever the user says a paper "graduated", "was published", "has a newer version", "check for updates", "is this the latest version", asks to upgrade or refresh a preprint record, or before citing a preprint whose figures might have changed. Complements the `zotero` skill (reads/writes) and `zotero-merge-prep` (duplicate consolidation).
+---
+
+# Zotero version upgrade
+
+**The convention this enforces:** a record always reflects the **newest** version of the
+work (latest arXiv revision, or the published version once it exists). History is never
+lost: it lives in `orig-type:<old type>` and `orig-date:<old date>` tags and a one-line
+Extra entry naming the previous type/date/title, the source of the upgrade, and any
+fields the type change dropped.
+
+## Setup
+Required: `ZOTERO_API_KEY_RO` (reads) and `ZOTERO_API_KEY_RW` (a **WRITE** key — `--commit`
+edits records). Name the library with `ZOTERO_<NAME>_LIBRARY_ID` (or `ZOTERO_USER_ID`) and
+pass `--library NAME`. Calls arXiv (`export.arxiv.org`) and Crossref (`api.crossref.org`).
+
+## Credentials in this environment (Claude Desktop / claude.ai)
+
+This skill runs in Claude's sandboxed code-execution environment: there is no shell
+profile, no direnv, and no saved config files. The API keys are provided as `KEY=value`
+lines in the **project instructions** (or the user's global preferences), using the same
+variable names the CLI already reads:
+
+```
+ZOTERO_API_KEY_RO=xxxxxxxxxxxxxxxxxxxxxxxx   # reads (account-wide: personal library + all groups)
+ZOTERO_API_KEY_RW=xxxxxxxxxxxxxxxxxxxxxxxx   # writes (e.g. tag-add --commit); omit if you only read
+ZOTERO_USER_ID=1234567                       # personal library (--library user)
+ZOTERO_SLR_LIBRARY_ID=6505702                # named group libraries (--library SLR); repeat per group
+```
+
+Read the values from the instructions and pass them **inline as environment variables on
+every script invocation**:
+
+```
+ZOTERO_API_KEY_RO=... ZOTERO_API_KEY_RW=... ZOTERO_SLR_LIBRARY_ID=... \
+  python3 scripts/upgrade_version.py KEY --library SLR --plan-dir /tmp/zotero-plans
+```
+
+Rules:
+- Never print, echo, or quote key values back in your reply to the user.
+- If a required key is missing from the project/global instructions, ask the user to add
+  it there (or paste it in chat for this conversation only). Do not invent values.
+
+Environment caveats (claude.ai sandbox):
+- **Upload the `zotero` skill too.** Every read and write goes through its `zotero.py`,
+  which this script finds in the sibling `zotero/` skill folder. Without it the script
+  stops with "could not locate zotero.py".
+- Pass `--plan-dir /tmp/zotero-plans`: the default plan directory is a path on Scott's Mac.
+
+## Commands
+```
+python3 scripts/upgrade_version.py KEY [KEY ...] --library SLR          # dry-run diff
+python3 scripts/upgrade_version.py KEY --library SLR --commit           # apply
+python3 scripts/upgrade_version.py KEY --item-json item.json            # offline plan only
+```
+
+| Option | Effect |
+|---|---|
+| `--commit` | Apply. Default is DRY-RUN (shows the diff from `zotero.py update-items`). |
+| `--no-abstract` | Keep the existing abstract on arXiv revisions (default replaces it with the new version's). |
+| `--original-date` | Also add `original-date:` to Extra. APA renders this as "2022/2025", which is right for **reprints/republications**, wrong for preprint revisions. Off by default. |
+| `--no-published` | Only check arXiv revisions. |
+| `--plan-dir DIR` | Plan file location. Default `~/Code/Thurlow-Research/zotero-plans` (macOS blocks `zotero.py` from reading `~/Downloads`). |
+
+## What it decides, in order
+1. **Published version exists?** (preprints only) Uses the DOI arXiv lists for the paper; if none, searches Crossref and accepts a match only at ≥0.92 title similarity with the same first-author surname, excluding arXiv DOIs. On a match: item type → journalArticle / conferencePaper / bookSection; fills venue, pages, volume/issue, publisher, DOI, URL, date; fields the new type can't hold are recorded under `dropped fields` in Extra and the write uses `--allow-field-loss` (safe because the values are preserved).
+2. **Else, newer arXiv revision?** Compares the recorded version (from `vN` in URL/Extra or a `version: vN` line) or, if none, the record date, against arXiv's latest. On a newer one: date → latest version date, abstract → latest abstract, PDF/URL/`Last Updated`/`version:` lines advanced.
+3. **Else** reports `up-to-date` (or `no-newer-version-found` for non-arXiv preprints).
+
+## After any upgrade (required)
+- **Re-verify every cited figure against the new full text** before citing it; revisions change numbers (e.g., Zhao v4 moved 61%/10.5% to 57%/11.8%; Liu v3 replaced ">15%" with "7.5–14.8%"). The report prints the new PDF link.
+- **Check the citation year.** Upgrading a 2025 preprint to a 2026 revision changes "(Author, 2025)" to "(Author, 2026)" after Refresh in Word.
+- Attach the new PDF to the record so the library's full text matches what's cited.
+- **Check for retractions (Scite, optional).** If Scite tools are loaded, run `verify_papers`
+  on the upgraded DOI. Report any retraction, correction or expression of concern to the
+  user next to the upgrade; don't tag or edit the record for it unless they ask. Scite tool
+  names carry a host prefix (`mcp__claude_ai_Scite__…`, `mcp__scite__…`); match on the bare
+  name, and skip this if none are loaded.
+
+## Known limits
+- Published versions not yet in Crossref (e.g., an accepted paper before proceedings appear) are not found; re-run later.
+- Non-arXiv preprints (SSRN, OSF) are only checked for a published version.
+- Titles are not rewritten (they keep your sentence-case cleanup).
